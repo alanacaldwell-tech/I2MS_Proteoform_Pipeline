@@ -6,39 +6,36 @@
 <div class="container">
     <header class="app-header">
         <h1>I2MS Proteoform Ion Counter</h1>
-        <p class="subtitle">Upload a reference CSV and .dmt files to count ions within each centroid window.</p>
+        <p class="subtitle">Provide file paths below to count ions within each centroid window.</p>
     </header>
 
-    <!-- Step 1: CSV -->
+    <!-- Step 1: CSV path -->
     <section class="card">
         <h2><span class="step">1</span> Reference CSV file</h2>
         <p class="hint">First column: centroid mass (Da) &middot; Second column: tolerance &plusmn; (Da)</p>
-        <InputFile OnChange="OnCsvSelected" accept=".csv" class="file-input" id="csvInput" />
-        <label for="csvInput" class="file-label @(csvReady ? "ready" : "")">
-            @(csvFileName ?? "Choose CSV file…")
-        </label>
+        <input class="path-input @(csvError is not null ? "input-error" : "")"
+               type="text"
+               placeholder="e.g. C:\Users\YourName\Documents\centroids.csv"
+               @bind="csvPath"
+               @bind:event="oninput" />
         @if (csvError is not null)
         {
             <p class="error">@csvError</p>
         }
     </section>
 
-    <!-- Step 2: DMT files -->
+    <!-- Step 2: DMT folder path -->
     <section class="card">
-        <h2><span class="step">2</span> .dmt files</h2>
-        <p class="hint">Select one or more .dmt database files. Each file becomes one column in the output.</p>
-        <InputFile OnChange="OnDmtSelected" accept=".dmt" multiple class="file-input" id="dmtInput" />
-        <label for="dmtInput" class="file-label @(dmtFiles.Count > 0 ? "ready" : "")">
-            @(dmtFiles.Count == 0 ? "Choose .dmt files…" : $"{dmtFiles.Count} file(s) selected")
-        </label>
-        @if (dmtFiles.Count > 0)
+        <h2><span class="step">2</span> Folder containing .dmt files</h2>
+        <p class="hint">Each .dmt file in this folder becomes one column in the output.</p>
+        <input class="path-input @(dmtError is not null ? "input-error" : "")"
+               type="text"
+               placeholder="e.g. C:\Users\YourName\Documents\DMT_Files"
+               @bind="dmtFolder"
+               @bind:event="oninput" />
+        @if (dmtError is not null)
         {
-            <ul class="file-list">
-                @foreach (var f in dmtFiles)
-                {
-                    <li>@f.Name <span class="file-size">(@FormatBytes(f.Size))</span></li>
-                }
-            </ul>
+            <p class="error">@dmtError</p>
         }
     </section>
 
@@ -110,66 +107,60 @@
 </div>
 
 @code {
-    private IBrowserFile?        csvFile;
-    private string?              csvFileName;
-    private string?              csvError;
-    private bool                 csvReady;
+    private string  csvPath       = "";
+    private string  dmtFolder     = "";
+    private string? csvError;
+    private string? dmtError;
 
-    private List<IBrowserFile>   dmtFiles = new();
+    private bool    isRunning;
+    private int     progressCurrent;
+    private int     progressTotal   = 1;
+    private string  progressMessage = "";
 
-    private bool                 isRunning;
-    private int                  progressCurrent;
-    private int                  progressTotal = 1;
-    private string               progressMessage = "";
+    private ProcessResult? result;
+    private byte[]?        resultBytes;
 
-    private ProcessResult?       result;
-    private byte[]?              resultBytes;
-
-    private bool CanRun => csvReady && dmtFiles.Count > 0 && !isRunning;
+    private bool CanRun => !string.IsNullOrWhiteSpace(csvPath)
+                        && !string.IsNullOrWhiteSpace(dmtFolder)
+                        && !isRunning;
 
     private double ProgressPercent =>
         progressTotal == 0 ? 0 : Math.Round((double)progressCurrent / progressTotal * 100, 1);
 
-    private void OnCsvSelected(InputFileChangeEventArgs e)
+    private bool Validate()
     {
-        csvError    = null;
-        csvReady    = false;
-        csvFile     = e.File;
-        csvFileName = e.File.Name;
+        csvError = dmtError = null;
+        bool ok = true;
 
-        if (!csvFileName.EndsWith(".csv", StringComparison.OrdinalIgnoreCase))
+        if (!File.Exists(csvPath.Trim()))
         {
-            csvError = "Please select a .csv file.";
-            return;
+            csvError = "File not found. Check the path and try again.";
+            ok = false;
         }
-        csvReady = true;
-    }
 
-    private void OnDmtSelected(InputFileChangeEventArgs e)
-    {
-        dmtFiles = e.GetMultipleFiles(maximumFileCount: 500).ToList();
+        if (!Directory.Exists(dmtFolder.Trim()))
+        {
+            dmtError = "Folder not found. Check the path and try again.";
+            ok = false;
+        }
+
+        return ok;
     }
 
     private async Task RunAsync()
     {
-        if (!CanRun || csvFile is null) return;
+        if (!CanRun || !Validate()) return;
 
         isRunning       = true;
         result          = null;
         resultBytes     = null;
         progressCurrent = 0;
-        progressTotal   = dmtFiles.Count;
+        progressTotal   = 1;
         progressMessage = "Starting…";
         StateHasChanged();
 
         try
         {
-            await using var csvStream = csvFile.OpenReadStream(IonCounterService.MaxFileSizeBytes);
-
-            var dmtStreams = new List<(Stream Data, string Name)>();
-            foreach (var f in dmtFiles)
-                dmtStreams.Add((f.OpenReadStream(IonCounterService.MaxFileSizeBytes), f.Name));
-
             var prog = new Progress<(int current, int total, string message)>(p =>
             {
                 progressCurrent = p.current;
@@ -178,7 +169,7 @@
                 InvokeAsync(StateHasChanged);
             });
 
-            result = await IonCounter.RunAsync(csvStream, csvFile.Name, dmtStreams, prog);
+            result = await IonCounter.RunAsync(csvPath.Trim(), dmtFolder.Trim(), prog);
 
             if (result.Success)
                 resultBytes = result.OutputCsvBytes;
@@ -199,16 +190,5 @@
         if (resultBytes is null || result is null) return;
         var b64 = Convert.ToBase64String(resultBytes);
         await JS.InvokeVoidAsync("downloadBase64File", result.OutputFileName, "text/csv", b64);
-    }
-
-    private static string FormatBytes(long bytes)
-    {
-        if (bytes < 1024L)
-            return $"{bytes} B";
-        if (bytes < 1024L * 1024)
-            return $"{bytes / 1024.0:F1} KB";
-        if (bytes < 1024L * 1024 * 1024)
-            return $"{bytes / 1024.0 / 1024:F1} MB";
-        return $"{bytes / 1024.0 / 1024 / 1024:F2} GB";
     }
 }

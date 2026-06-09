@@ -12,32 +12,29 @@ public sealed class ProcessResult
 
 public sealed class IonCounterService
 {
-    // Max bytes per uploaded file allowed through the Blazor InputFile component.
-    public const long MaxFileSizeBytes = 2L * 1024 * 1024 * 1024; // 2 GB
-
     public async Task<ProcessResult> RunAsync(
-        Stream csvStream,
-        string csvFileName,
-        IReadOnlyList<(Stream Data, string Name)> dmtFiles,
+        string csvPath,
+        string dmtFolder,
         IProgress<(int current, int total, string message)>? progress = null,
         CancellationToken ct = default)
     {
         var log = new List<string>();
-
         void Log(string msg) { log.Add(msg); }
 
-        // ── Parse CSV ────────────────────────────────────────────────────────
-        // Buffer the upload stream into memory first — Blazor upload streams
-        // only support async reads, but CsvReader uses synchronous StreamReader.
-        var csvBuffer = new MemoryStream();
-        await csvStream.CopyToAsync(csvBuffer, ct);
-        csvBuffer.Position = 0;
+        // ── Validate inputs ──────────────────────────────────────────────────
+        if (!File.Exists(csvPath))
+            return Fail($"CSV file not found: {csvPath}", log);
 
+        if (!Directory.Exists(dmtFolder))
+            return Fail($"Folder not found: {dmtFolder}", log);
+
+        // ── Parse CSV ────────────────────────────────────────────────────────
         List<CentroidEntry> entries;
         string[] originalHeaders;
         try
         {
-            (entries, originalHeaders) = CsvReader.Parse(csvBuffer);
+            using var stream = File.OpenRead(csvPath);
+            (entries, originalHeaders) = CsvReader.Parse(stream);
         }
         catch (Exception ex)
         {
@@ -48,75 +45,63 @@ public sealed class IonCounterService
         foreach (var e in entries)
             Log($"  {e.CentroidMass:G} ± {e.Tolerance:G} Da");
 
-        if (dmtFiles.Count == 0)
-            return Fail("No .dmt files were uploaded.", log);
+        // ── Find .dmt files ──────────────────────────────────────────────────
+        var dmtFiles = Directory.GetFiles(dmtFolder, "*.dmt", SearchOption.TopDirectoryOnly)
+                                .OrderBy(f => f)
+                                .ToArray();
 
-        Log($"\nProcessing {dmtFiles.Count} .dmt file(s)…\n");
+        if (dmtFiles.Length == 0)
+            return Fail("No .dmt files found in the specified folder.", log);
 
-        var dmtFileNames = dmtFiles.Select(f => f.Name).ToList();
-        var tempFiles    = new List<string>();
+        Log($"\nFound {dmtFiles.Length} .dmt file(s).\n");
 
-        try
+        // ── Count ions ───────────────────────────────────────────────────────
+        for (int f = 0; f < dmtFiles.Length; f++)
         {
-            // ── Write dmt streams to temp files (SQLite needs a real path) ──
-            for (int i = 0; i < dmtFiles.Count; i++)
+            ct.ThrowIfCancellationRequested();
+            string filePath = dmtFiles[f];
+            string fileName = Path.GetFileName(filePath);
+
+            progress?.Report((f, dmtFiles.Length, $"Processing {fileName}…"));
+            Log($"[{f + 1}/{dmtFiles.Length}]  {fileName}…");
+
+            var counts = new long[entries.Count];
+            try
             {
-                ct.ThrowIfCancellationRequested();
-                string tmp = Path.GetTempFileName();
-                tempFiles.Add(tmp);
-
-                await using var fs = File.OpenWrite(tmp);
-                await dmtFiles[i].Data.CopyToAsync(fs, ct);
-            }
-
-            // ── Count ions ──────────────────────────────────────────────────
-            for (int f = 0; f < tempFiles.Count; f++)
-            {
-                ct.ThrowIfCancellationRequested();
-                string fileName = dmtFileNames[f];
-
-                progress?.Report((f, dmtFiles.Count, $"Processing {fileName}…"));
-                Log($"[{f + 1}/{dmtFiles.Count}]  {fileName}…");
-
-                var counts = new long[entries.Count];
-                try
+                await Task.Run(() =>
                 {
-                    foreach (double mass in DmtParser.ReadMasses(tempFiles[f]))
+                    foreach (double mass in DmtParser.ReadMasses(filePath))
                     {
                         ct.ThrowIfCancellationRequested();
                         for (int e = 0; e < entries.Count; e++)
                             if (entries[e].Contains(mass))
                                 counts[e]++;
                     }
-                }
-                catch (OperationCanceledException) { throw; }
-                catch (Exception ex)
-                {
-                    Log($"  ERROR reading {fileName}: {ex.Message}");
-                    for (int e = 0; e < entries.Count; e++)
-                        entries[e].Counts.Add((fileName, 0));
-                    continue;
-                }
-
-                long total = 0;
-                for (int e = 0; e < entries.Count; e++)
-                {
-                    entries[e].Counts.Add((fileName, counts[e]));
-                    total += counts[e];
-                }
-
-                Log($"  → {total:N0} matching ion(s)");
+                }, ct);
             }
-        }
-        finally
-        {
-            foreach (var tmp in tempFiles)
-                try { File.Delete(tmp); } catch { /* best effort */ }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex)
+            {
+                Log($"  ERROR: {ex.Message}");
+                for (int e = 0; e < entries.Count; e++)
+                    entries[e].Counts.Add((fileName, 0));
+                continue;
+            }
+
+            long total = 0;
+            for (int e = 0; e < entries.Count; e++)
+            {
+                entries[e].Counts.Add((fileName, counts[e]));
+                total += counts[e];
+            }
+
+            Log($"  → {total:N0} matching ion(s)");
         }
 
-        progress?.Report((dmtFiles.Count, dmtFiles.Count, "Writing output…"));
+        progress?.Report((dmtFiles.Length, dmtFiles.Length, "Writing output…"));
 
         // ── Build output CSV ─────────────────────────────────────────────────
+        var dmtFileNames = dmtFiles.Select(Path.GetFileName).ToList()!;
         byte[] outputBytes;
         try
         {
@@ -124,12 +109,11 @@ public sealed class IonCounterService
         }
         catch (Exception ex)
         {
-            return Fail($"Error writing output CSV: {ex.Message}", log);
+            return Fail($"Error writing output: {ex.Message}", log);
         }
 
-        string baseName    = Path.GetFileNameWithoutExtension(csvFileName);
-        string outputName  = baseName + "_ion_counts.csv";
-
+        string baseName   = Path.GetFileNameWithoutExtension(csvPath);
+        string outputName = baseName + "_ion_counts.csv";
         Log($"\nDone. Output: {outputName}");
 
         var summary = entries
