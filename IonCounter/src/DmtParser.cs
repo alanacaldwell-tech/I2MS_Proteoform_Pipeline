@@ -9,7 +9,7 @@ namespace IonCounter;
 /// </summary>
 internal static class DmtParser
 {
-    private const double ProtonMass = 1.007276; // Da
+    private const double ProtonMass = 1.007825; // Da (hydrogen atom mass)
 
     public static IEnumerable<double> ReadMasses(string filePath)
     {
