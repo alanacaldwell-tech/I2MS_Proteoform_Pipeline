@@ -1,6 +1,4 @@
 @page "/"
-@using IonCounterWeb.Services
-@using Microsoft.AspNetCore.Components.Forms
 @inject IonCounterService IonCounter
 @inject IJSRuntime JS
 @rendermode InteractiveServer
@@ -11,10 +9,10 @@
         <p class="subtitle">Upload a reference CSV and .dmt files to count ions within each centroid window.</p>
     </header>
 
-    <!-- ── Step 1: CSV ──────────────────────────────────────────────────── -->
+    <!-- Step 1: CSV -->
     <section class="card">
         <h2><span class="step">1</span> Reference CSV file</h2>
-        <p class="hint">First column: centroid mass (Da) · Second column: tolerance ± (Da)</p>
+        <p class="hint">First column: centroid mass (Da) &middot; Second column: tolerance &plusmn; (Da)</p>
         <InputFile OnChange="OnCsvSelected" accept=".csv" class="file-input" id="csvInput" />
         <label for="csvInput" class="file-label @(csvReady ? "ready" : "")">
             @(csvFileName ?? "Choose CSV file…")
@@ -25,7 +23,7 @@
         }
     </section>
 
-    <!-- ── Step 2: DMT files ────────────────────────────────────────────── -->
+    <!-- Step 2: DMT files -->
     <section class="card">
         <h2><span class="step">2</span> .dmt files</h2>
         <p class="hint">Select one or more .dmt database files. Each file becomes one column in the output.</p>
@@ -44,43 +42,41 @@
         }
     </section>
 
-    <!-- ── Run ──────────────────────────────────────────────────────────── -->
+    <!-- Run -->
     <section class="card run-section">
-        <button class="btn-run" @onclick="RunAsync"
-                disabled="@(!CanRun)">
+        <button class="btn-run" @onclick="RunAsync" disabled="@(!CanRun)">
             @if (isRunning)
             {
                 <span class="spinner"></span>
-                <span>Processing…</span>
+                <span>Processing&hellip;</span>
             }
             else
             {
-                <span>▶ Run</span>
+                <span>&#9654; Run</span>
             }
         </button>
 
         @if (isRunning)
         {
             <div class="progress-bar-wrap">
-                <div class="progress-bar-fill" style="width: @ProgressPercent%"></div>
+                <div class="progress-bar-fill" style="width:@(ProgressPercent)%"></div>
             </div>
             <p class="progress-label">@progressMessage</p>
         }
     </section>
 
-    <!-- ── Results ──────────────────────────────────────────────────────── -->
+    <!-- Results -->
     @if (result is not null)
     {
         <section class="card result-section @(result.Success ? "success" : "failure")">
             @if (result.Success)
             {
-                <h2>✔ Complete</h2>
-
+                <h2>&#10004; Complete</h2>
                 <table class="summary-table">
                     <thead>
                         <tr>
                             <th>Centroid (Da)</th>
-                            <th>Tolerance ± (Da)</th>
+                            <th>Tolerance &plusmn; (Da)</th>
                             <th>Total ions</th>
                         </tr>
                     </thead>
@@ -95,19 +91,17 @@
                         }
                     </tbody>
                 </table>
-
                 <button class="btn-download" @onclick="DownloadResult">
-                    ⬇ Download @result.OutputFileName
+                    &#11015; Download @result.OutputFileName
                 </button>
             }
             else
             {
-                <h2>✖ Error</h2>
+                <h2>&#10006; Error</h2>
                 <p class="error">@result.ErrorMessage</p>
             }
         </section>
 
-        <!-- Log -->
         <section class="card log-section">
             <h2>Log</h2>
             <pre class="log-box">@string.Join("\n", result.Log)</pre>
@@ -116,32 +110,31 @@
 </div>
 
 @code {
-    // ── State ────────────────────────────────────────────────────────────────
-    private IBrowserFile?            csvFile;
-    private string?                  csvFileName;
-    private string?                  csvError;
-    private bool                     csvReady;
+    private IBrowserFile?        csvFile;
+    private string?              csvFileName;
+    private string?              csvError;
+    private bool                 csvReady;
 
-    private List<IBrowserFile>       dmtFiles = new();
+    private List<IBrowserFile>   dmtFiles = new();
 
-    private bool                     isRunning;
-    private int                      progressCurrent;
-    private int                      progressTotal   = 1;
-    private string                   progressMessage = "";
+    private bool                 isRunning;
+    private int                  progressCurrent;
+    private int                  progressTotal = 1;
+    private string               progressMessage = "";
 
-    private ProcessResult?           result;
-    private byte[]?                  resultBytes;
+    private ProcessResult?       result;
+    private byte[]?              resultBytes;
 
     private bool CanRun => csvReady && dmtFiles.Count > 0 && !isRunning;
+
     private double ProgressPercent =>
         progressTotal == 0 ? 0 : Math.Round((double)progressCurrent / progressTotal * 100, 1);
 
-    // ── File selection ───────────────────────────────────────────────────────
     private void OnCsvSelected(InputFileChangeEventArgs e)
     {
-        csvError = null;
-        csvReady = false;
-        csvFile  = e.File;
+        csvError    = null;
+        csvReady    = false;
+        csvFile     = e.File;
         csvFileName = e.File.Name;
 
         if (!csvFileName.EndsWith(".csv", StringComparison.OrdinalIgnoreCase))
@@ -157,7 +150,6 @@
         dmtFiles = e.GetMultipleFiles(maximumFileCount: 500).ToList();
     }
 
-    // ── Run ──────────────────────────────────────────────────────────────────
     private async Task RunAsync()
     {
         if (!CanRun || csvFile is null) return;
@@ -202,21 +194,21 @@
         }
     }
 
-    // ── Download ─────────────────────────────────────────────────────────────
     private async Task DownloadResult()
     {
         if (resultBytes is null || result is null) return;
-
         var b64 = Convert.ToBase64String(resultBytes);
         await JS.InvokeVoidAsync("downloadBase64File", result.OutputFileName, "text/csv", b64);
     }
 
-    // ── Helpers ──────────────────────────────────────────────────────────────
-    private static string FormatBytes(long bytes) => bytes switch
+    private static string FormatBytes(long bytes)
     {
-        < 1024              => $"{bytes} B",
-        < 1024 * 1024       => $"{bytes / 1024.0:F1} KB",
-        < 1024L * 1024 * 1024 => $"{bytes / 1024.0 / 1024:F1} MB",
-        _                   => $"{bytes / 1024.0 / 1024 / 1024:F2} GB"
-    };
+        if (bytes < 1024L)
+            return $"{bytes} B";
+        if (bytes < 1024L * 1024)
+            return $"{bytes / 1024.0:F1} KB";
+        if (bytes < 1024L * 1024 * 1024)
+            return $"{bytes / 1024.0 / 1024:F1} MB";
+        return $"{bytes / 1024.0 / 1024 / 1024:F2} GB";
+    }
 }
