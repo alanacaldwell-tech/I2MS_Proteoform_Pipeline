@@ -69,25 +69,33 @@
             @if (result.Success)
             {
                 <h2>&#10004; Complete</h2>
-                <table class="summary-table">
-                    <thead>
-                        <tr>
-                            <th>Centroid (Da)</th>
-                            <th>Tolerance &plusmn; (Da)</th>
-                            <th>Total ions</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        @foreach (var row in result.Summary)
-                        {
+                <div class="table-scroll">
+                    <table class="summary-table">
+                        <thead>
                             <tr>
-                                <td>@row.Centroid.ToString("G")</td>
-                                <td>@row.Tolerance.ToString("G")</td>
-                                <td>@row.TotalCount.ToString("N0")</td>
+                                <th class="col-sticky">Centroid (Da)</th>
+                                <th class="col-sticky col-sticky-2">Tolerance &plusmn; (Da)</th>
+                                @foreach (var name in result.DmtFileNames)
+                                {
+                                    <th>@name</th>
+                                }
                             </tr>
-                        }
-                    </tbody>
-                </table>
+                        </thead>
+                        <tbody>
+                            @foreach (var row in result.Rows)
+                            {
+                                <tr>
+                                    <td class="col-sticky">@row.Centroid.ToString("G")</td>
+                                    <td class="col-sticky col-sticky-2">@row.Tolerance.ToString("G")</td>
+                                    @for (int i = 0; i < row.Counts.Count; i++)
+                                    {
+                                        <td>@row.Counts[i].ToString("N0")</td>
+                                    }
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
                 <button class="btn-download" @onclick="DownloadResult">
                     &#11015; Download @result.OutputFileName
                 </button>

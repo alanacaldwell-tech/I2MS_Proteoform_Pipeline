@@ -131,6 +131,26 @@ body {
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 
+/* ── Scrollable results table ───────────────────────────────────────────── */
+.table-scroll {
+    overflow-x: auto;
+    margin-bottom: 1.2rem;
+    border: 1px solid #e0e0e0;
+    border-radius: 7px;
+}
+
+/* Sticky first two columns so centroid/tolerance stay visible when scrolling */
+.col-sticky {
+    position: sticky;
+    left: 0;
+    background: #f5f5f5;
+    z-index: 1;
+}
+.col-sticky-2 {
+    left: 130px; /* must match the width of the first sticky column */
+    box-shadow: 2px 0 4px rgba(0,0,0,0.06);
+}
+
 /* ── Results ────────────────────────────────────────────────────────────── */
 .result-section.success { border-left: 5px solid #43a047; }
 .result-section.failure { border-left: 5px solid #e53935; }
@@ -147,7 +167,8 @@ body {
     padding: 0.5rem 0.75rem;
     border-bottom: 1px solid #e0e0e0;
 }
-.summary-table th { background: #f5f5f5; font-weight: 600; }
+.summary-table th { background: #f5f5f5; font-weight: 600; white-space: nowrap; }
+.summary-table td { white-space: nowrap; }
 .summary-table tr:last-child td { border-bottom: none; }
 .summary-table td:last-child { text-align: right; font-variant-numeric: tabular-nums; }
 

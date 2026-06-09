@@ -7,7 +7,10 @@ public sealed class ProcessResult
     public byte[]? OutputCsvBytes { get; init; }
     public string OutputFileName { get; init; } = "ion_counts.csv";
     public List<string> Log { get; init; } = new();
-    public List<(double Centroid, double Tolerance, long TotalCount)> Summary { get; init; } = new();
+    // Column headers (one per .dmt file).
+    public List<string> DmtFileNames { get; init; } = new();
+    // Rows: one per centroid. Counts are in the same order as DmtFileNames.
+    public List<(double Centroid, double Tolerance, List<long> Counts)> Rows { get; init; } = new();
 }
 
 public sealed class IonCounterService
@@ -116,9 +119,12 @@ public sealed class IonCounterService
         string outputName = baseName + "_ion_counts.csv";
         Log($"\nDone. Output: {outputName}");
 
-        var summary = entries
-            .Select(e => (e.CentroidMass, e.Tolerance, e.Counts.Sum(c => c.Count)))
-            .ToList();
+        var rows = entries.Select(e =>
+        {
+            var counts = dmtFileNames.Select(name =>
+                e.Counts.FirstOrDefault(c => c.FileName == name).Count).ToList();
+            return (e.CentroidMass, e.Tolerance, counts);
+        }).ToList();
 
         return new ProcessResult
         {
@@ -126,7 +132,8 @@ public sealed class IonCounterService
             OutputCsvBytes = outputBytes,
             OutputFileName = outputName,
             Log            = log,
-            Summary        = summary
+            DmtFileNames   = dmtFileNames,
+            Rows           = rows
         };
     }
 
