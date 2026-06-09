@@ -27,11 +27,17 @@ public sealed class IonCounterService
         void Log(string msg) { log.Add(msg); }
 
         // ── Parse CSV ────────────────────────────────────────────────────────
+        // Buffer the upload stream into memory first — Blazor upload streams
+        // only support async reads, but CsvReader uses synchronous StreamReader.
+        var csvBuffer = new MemoryStream();
+        await csvStream.CopyToAsync(csvBuffer, ct);
+        csvBuffer.Position = 0;
+
         List<CentroidEntry> entries;
         string[] originalHeaders;
         try
         {
-            (entries, originalHeaders) = CsvReader.Parse(csvStream);
+            (entries, originalHeaders) = CsvReader.Parse(csvBuffer);
         }
         catch (Exception ex)
         {
