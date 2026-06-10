@@ -3,41 +3,47 @@ namespace ProteoformAnalyzer;
 public static class TruncationGenerator
 {
     /// <summary>
-    /// Generates all N- and C-terminal truncations for a given sequence.
-    /// Each truncation removes 1..n-1 residues from the respective terminus.
-    /// The description records the mass delta relative to the intact sequence.
+    /// Generates N- and C-terminal truncation proteoforms.
+    /// Each truncation removes between 1 and (length-1) residues from one terminus.
     /// </summary>
-    public static List<Truncation> Generate(string sequence)
+    public static List<PtmAnnotation> Generate(string sequence)
     {
-        var truncations = new List<Truncation>();
+        var truncations = new List<PtmAnnotation>();
         int len = sequence.Length;
-        double intactMass = AminoAcidMasses.CalculateMass(sequence);
 
-        // N-terminal truncations: remove residues 0..i-1
+        // N-terminal truncations: remove first i residues → protein starts at i+1
         for (int i = 1; i < len; i++)
         {
             string truncSeq = sequence[i..];
-            double truncMass = AminoAcidMasses.CalculateMass(truncSeq);
-            truncations.Add(new Truncation
+            double intactMass = AminoAcidData.AverageMass(AminoAcidData.GetFormula(sequence));
+            double truncMass  = AminoAcidData.AverageMass(AminoAcidData.GetFormula(truncSeq));
+
+            truncations.Add(new PtmAnnotation
             {
-                Name = $"N-terminal truncation (-{i} residue{(i > 1 ? "s" : "")}, starts at pos {i + 1})",
-                IsNTerminal = true,
-                ResiduesToRemove = i,
-                MassDelta = truncMass - intactMass
+                ModificationName = $"N-terminal truncation (remove residues 1–{i})",
+                Position = 0,
+                MassDelta = truncMass - intactMass,
+                Source = "Computed",
+                IsNTerminalTruncation = true,
+                TruncationLength = i
             });
         }
 
-        // C-terminal truncations: remove residues len-i..len-1
+        // C-terminal truncations: remove last i residues → protein ends at len-i
         for (int i = 1; i < len; i++)
         {
             string truncSeq = sequence[..^i];
-            double truncMass = AminoAcidMasses.CalculateMass(truncSeq);
-            truncations.Add(new Truncation
+            double intactMass = AminoAcidData.AverageMass(AminoAcidData.GetFormula(sequence));
+            double truncMass  = AminoAcidData.AverageMass(AminoAcidData.GetFormula(truncSeq));
+
+            truncations.Add(new PtmAnnotation
             {
-                Name = $"C-terminal truncation (-{i} residue{(i > 1 ? "s" : "")}, ends at pos {len - i})",
-                IsNTerminal = false,
-                ResiduesToRemove = i,
-                MassDelta = truncMass - intactMass
+                ModificationName = $"C-terminal truncation (remove residues {len - i + 1}–{len})",
+                Position = 0,
+                MassDelta = truncMass - intactMass,
+                Source = "Computed",
+                IsCTerminalTruncation = true,
+                TruncationLength = i
             });
         }
 

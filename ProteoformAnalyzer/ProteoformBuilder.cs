@@ -2,71 +2,87 @@ namespace ProteoformAnalyzer;
 
 public static class ProteoformBuilder
 {
-    /// <summary>
-    /// Builds the full list of proteoforms from a sequence, a modification database,
-    /// and optionally a set of truncations.
-    /// </summary>
-    public static List<Proteoform> Build(
+    public static List<ProteoformEntry> Build(
         string sequence,
-        ModificationDatabase db,
+        List<PtmAnnotation> allPtms,
         bool includeTruncations,
         double tolerance)
     {
-        var results = new List<Proteoform>();
-        double baseMass = AminoAcidMasses.CalculateMass(sequence);
+        var entries = new List<ProteoformEntry>();
+        var intactFormula = AminoAcidData.GetFormula(sequence);
+        var intactEnvelope = IsotopeCalculator.Compute(intactFormula);
 
-        // 1. Intact (unmodified) proteoform
-        results.Add(new Proteoform
+        // ── 1. Intact, unmodified proteoform ──────────────────────────────
+        entries.Add(new ProteoformEntry
         {
-            Description = "Intact (unmodified)",
-            Mass = baseMass,
-            Tolerance = tolerance
+            SequencePosition = "N/A",
+            ModificationName = "Unmodified (intact)",
+            CentroidMass = intactEnvelope.Centroid,
+            Tolerance = tolerance,
+            Source = "Computed",
+            Envelope = intactEnvelope
         });
 
-        // 2. Single modifications applied to the intact sequence
-        var applicableMods = db.GetApplicable(sequence).ToList();
-        foreach (var mod in applicableMods)
+        // ── 2. Database-sourced single modifications ──────────────────────
+        // Deduplicate across sources: same (name, position) keeps the entry
+        // with the largest mass delta (non-zero beats zero if one source
+        // didn't know the delta).
+        var modPtms = allPtms
+            .Where(p => !p.IsNTerminalTruncation && !p.IsCTerminalTruncation)
+            .GroupBy(p => (NormName(p.ModificationName), p.Position))
+            .Select(g => g.OrderByDescending(p => Math.Abs(p.MassDelta)).First())
+            .OrderBy(p => p.Position)
+            .ToList();
+
+        foreach (var ptm in modPtms)
         {
-            results.Add(new Proteoform
+            var envelope = IsotopeCalculator.ComputeFromDelta(intactFormula, ptm.MassDelta);
+            entries.Add(new ProteoformEntry
             {
-                Description = mod.Name,
-                Mass = baseMass + mod.MassDelta,
-                Tolerance = tolerance
+                SequencePosition = FormatPosition(ptm, sequence),
+                ModificationName = ptm.ModificationName,
+                CentroidMass = envelope.Centroid,
+                Tolerance = tolerance,
+                Source = ptm.Source,
+                Envelope = envelope
             });
         }
 
-        // 3. Truncations (N- and C-terminal)
+        // ── 3. Truncations ────────────────────────────────────────────────
         if (includeTruncations && sequence.Length > 1)
         {
             var truncations = TruncationGenerator.Generate(sequence);
             foreach (var trunc in truncations)
             {
-                double truncMass = baseMass + trunc.MassDelta;
-                results.Add(new Proteoform
+                var envelope = IsotopeCalculator.ComputeFromDelta(intactFormula, trunc.MassDelta);
+
+                string pos = trunc.IsNTerminalTruncation
+                    ? $"1–{trunc.TruncationLength} removed"
+                    : $"{sequence.Length - trunc.TruncationLength + 1}–{sequence.Length} removed";
+
+                entries.Add(new ProteoformEntry
                 {
-                    Description = trunc.Name,
-                    Mass = truncMass,
-                    Tolerance = tolerance
+                    SequencePosition = pos,
+                    ModificationName = trunc.ModificationName,
+                    CentroidMass = envelope.Centroid,
+                    Tolerance = tolerance,
+                    Source = "Computed",
+                    Envelope = envelope
                 });
-
-                // Also apply single modifications to each truncation
-                string truncSeq = trunc.IsNTerminal
-                    ? sequence[trunc.ResiduesToRemove..]
-                    : sequence[..^trunc.ResiduesToRemove];
-
-                var truncMods = db.GetApplicable(truncSeq);
-                foreach (var mod in truncMods)
-                {
-                    results.Add(new Proteoform
-                    {
-                        Description = $"{trunc.Name} + {mod.Name}",
-                        Mass = truncMass + mod.MassDelta,
-                        Tolerance = tolerance
-                    });
-                }
             }
         }
 
-        return results;
+        return entries;
     }
+
+    private static string FormatPosition(PtmAnnotation ptm, string sequence)
+    {
+        if (ptm.Position <= 0) return "N/A";
+        char res = ptm.Residue ?? (ptm.Position <= sequence.Length
+            ? char.ToUpper(sequence[ptm.Position - 1]) : '?');
+        return $"{res}{ptm.Position}";
+    }
+
+    private static string NormName(string s) =>
+        s.Trim().ToLowerInvariant();
 }

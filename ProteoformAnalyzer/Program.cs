@@ -1,133 +1,175 @@
+using System.Text.RegularExpressions;
 using ProteoformAnalyzer;
 
-Console.WriteLine("=== Proteoform Analyzer ===");
+Console.WriteLine("╔══════════════════════════════════════════════╗");
+Console.WriteLine("║       Proteoform Analyzer  v2.0              ║");
+Console.WriteLine("║  UniProt · PRIDE · PTMeXchange/EBI           ║");
+Console.WriteLine("╚══════════════════════════════════════════════╝");
 Console.WriteLine();
 
-// ── 1. Get and validate protein sequence ──────────────────────────────────
+using var http = new HttpClient();
+http.DefaultRequestHeaders.Add("User-Agent", "ProteoformAnalyzer/2.0 (research tool)");
+http.DefaultRequestHeaders.Add("Accept", "application/json");
+http.Timeout = TimeSpan.FromSeconds(30);
+
+// ── 1. Sequence or UniProt ID ─────────────────────────────────────────────
 string sequence = "";
+string? uniprotId = null;
+
+Console.WriteLine("Enter a protein sequence (single-letter codes) OR a UniProt accession (e.g. P04637).");
 while (true)
 {
-    Console.Write("Enter protein sequence (single-letter amino acid codes): ");
-    string? input = Console.ReadLine()?.Trim().ToUpper();
-    if (string.IsNullOrEmpty(input))
+    Console.Write("> ");
+    string? raw = Console.ReadLine()?.Trim();
+    if (string.IsNullOrEmpty(raw)) continue;
+
+    if (Regex.IsMatch(raw, @"^[A-Z][0-9][A-Z0-9]{3}[0-9]$", RegexOptions.IgnoreCase) ||
+        Regex.IsMatch(raw, @"^[OPQ][0-9][A-Z0-9]{3}[0-9]$", RegexOptions.IgnoreCase))
     {
-        Console.WriteLine("  Sequence cannot be empty. Please try again.");
-        continue;
+        // Looks like a UniProt accession
+        uniprotId = raw.ToUpper();
+        break;
     }
 
-    var invalid = input.Where(c => !AminoAcidMasses.Residue.ContainsKey(c)).Distinct().ToList();
+    string candidate = raw.ToUpper().Replace(" ", "").Replace("\t", "");
+    var invalid = candidate.Where(c => !AminoAcidData.ResidueFormulas.ContainsKey(c)).Distinct().ToList();
     if (invalid.Count > 0)
     {
-        Console.WriteLine($"  Unknown residue(s): {string.Join(", ", invalid)}. Please use standard single-letter codes.");
+        Console.WriteLine($"  Unknown character(s): {string.Join(", ", invalid)}");
+        Console.WriteLine("  Enter a valid amino acid sequence or a UniProt accession.");
         continue;
     }
 
-    sequence = input;
+    sequence = candidate;
     break;
 }
 
-Console.WriteLine($"\nSequence accepted: {sequence}");
-Console.WriteLine($"Length: {sequence.Length} residues");
-Console.WriteLine($"Base monoisotopic mass: {AminoAcidMasses.CalculateMass(sequence):F4} Da");
+// ── 2. Fetch from UniProt / databases if accession was given ──────────────
+var allPtms = new List<PtmAnnotation>();
 
-// ── 2. Set up database ────────────────────────────────────────────────────
-var db = new ModificationDatabase();
-Console.WriteLine($"\nModification database loaded: {db.Modifications.Count} modifications.");
+if (uniprotId is not null)
+{
+    Console.WriteLine();
+    var uniprotClient = new UniProtClient(http);
+    (sequence, var uniprotPtms) = await uniprotClient.FetchAsync(uniprotId);
 
-// ── 3. Custom modifications ───────────────────────────────────────────────
+    if (string.IsNullOrEmpty(sequence))
+    {
+        Console.WriteLine("Could not retrieve sequence from UniProt. Exiting.");
+        return;
+    }
+
+    allPtms.AddRange(uniprotPtms);
+
+    var prideClient = new PrideClient(http);
+    var pridePtms = await prideClient.FetchAsync(uniprotId, sequence);
+    allPtms.AddRange(pridePtms);
+
+    var ptmExClient = new PtmExchangeClient(http);
+    var ptmExPtms = await ptmExClient.FetchAsync(uniprotId, sequence);
+    allPtms.AddRange(ptmExPtms);
+}
+else
+{
+    Console.WriteLine($"Sequence provided directly ({sequence.Length} aa). Skipping database queries.");
+}
+
+// ── 3. Summary ────────────────────────────────────────────────────────────
+var intactFormula = AminoAcidData.GetFormula(sequence);
+double intactMass = AminoAcidData.AverageMass(intactFormula);
+
+Console.WriteLine();
+Console.WriteLine($"Sequence  : {(sequence.Length <= 60 ? sequence : sequence[..57] + "...")}");
+Console.WriteLine($"Length    : {sequence.Length} aa");
+Console.WriteLine($"Formula   : {intactFormula}");
+Console.WriteLine($"Avg mass  : {intactMass:F4} Da  (isotope envelope centroid)");
+Console.WriteLine($"DB PTMs   : {allPtms.Count} annotations collected");
+
+// ── 4. Custom modifications ───────────────────────────────────────────────
 Console.WriteLine();
 while (true)
 {
     Console.Write("Add a custom modification? (y/n): ");
-    string? answer = Console.ReadLine()?.Trim().ToLower();
-    if (answer != "y") break;
+    if ((Console.ReadLine()?.Trim().ToLower() ?? "n") != "y") break;
 
-    var custom = PromptCustomModification();
-    db.AddCustomModification(custom);
-    Console.WriteLine($"  Added: {custom}");
+    string modName;
+    while (true)
+    {
+        Console.Write("  Modification name: ");
+        modName = Console.ReadLine()?.Trim() ?? "";
+        if (!string.IsNullOrEmpty(modName)) break;
+    }
+
+    double delta = 0;
+    while (true)
+    {
+        Console.Write("  Mass change in Da (e.g. +79.966 or -18.011): ");
+        string? d = Console.ReadLine()?.Trim();
+        if (double.TryParse(d, System.Globalization.NumberStyles.Any,
+                System.Globalization.CultureInfo.InvariantCulture, out delta)) break;
+        Console.WriteLine("  Please enter a valid decimal number.");
+    }
+
+    int pos = 0;
+    Console.Write("  Sequence position (1-based, 0 = whole-protein / unknown): ");
+    int.TryParse(Console.ReadLine()?.Trim(), out pos);
+
+    char? residue = pos > 0 && pos <= sequence.Length ? char.ToUpper(sequence[pos - 1]) : null;
+
+    allPtms.Add(new PtmAnnotation
+    {
+        ModificationName = modName,
+        Position = pos,
+        Residue = residue,
+        MassDelta = delta,
+        Source = "Custom"
+    });
+
+    Console.WriteLine($"  Added: {modName} @ pos {(pos > 0 ? pos.ToString() : "N/A")} ({(delta >= 0 ? "+" : "")}{delta:F4} Da)");
 }
 
-// ── 4. Options ────────────────────────────────────────────────────────────
+// ── 5. Options ────────────────────────────────────────────────────────────
 Console.WriteLine();
 Console.Write("Include N- and C-terminal truncations? (y/n, default y): ");
-bool includeTruncations = (Console.ReadLine()?.Trim().ToLower() ?? "y") != "n";
+bool includeTrunc = (Console.ReadLine()?.Trim().ToLower() ?? "y") != "n";
 
 double tolerance = 5.0;
 Console.Write("Mass tolerance in Da (default 5.0): ");
-string? tolInput = Console.ReadLine()?.Trim();
-if (!string.IsNullOrEmpty(tolInput) && double.TryParse(tolInput, out double parsedTol) && parsedTol > 0)
+string? tolStr = Console.ReadLine()?.Trim();
+if (!string.IsNullOrEmpty(tolStr) &&
+    double.TryParse(tolStr, System.Globalization.NumberStyles.Any,
+        System.Globalization.CultureInfo.InvariantCulture, out double parsedTol) && parsedTol > 0)
     tolerance = parsedTol;
 
-Console.WriteLine($"\nBuilding proteoform list (truncations: {includeTruncations}, tolerance: +/- {tolerance} Da)...");
-
-// ── 5. Build proteoforms ──────────────────────────────────────────────────
-var proteoforms = ProteoformBuilder.Build(sequence, db, includeTruncations, tolerance);
-Console.WriteLine($"Generated {proteoforms.Count} proteoforms.");
-
-// ── 6. Export CSV ─────────────────────────────────────────────────────────
+// ── 6. Build proteoforms ──────────────────────────────────────────────────
 Console.WriteLine();
-Console.Write("Output CSV file path (default: proteoforms.csv): ");
+Console.WriteLine($"Building proteoform list (truncations: {includeTrunc}, tolerance ±{tolerance} Da)...");
+
+var proteoforms = ProteoformBuilder.Build(sequence, allPtms, includeTrunc, tolerance);
+Console.WriteLine($"Generated {proteoforms.Count} proteoform entries.");
+
+// ── 7. Export CSV ─────────────────────────────────────────────────────────
+string defaultCsv = uniprotId is not null ? $"{uniprotId}_proteoforms.csv" : "proteoforms.csv";
+Console.Write($"\nOutput CSV path (default: {defaultCsv}): ");
 string? csvPath = Console.ReadLine()?.Trim();
-if (string.IsNullOrEmpty(csvPath))
-    csvPath = "proteoforms.csv";
+if (string.IsNullOrEmpty(csvPath)) csvPath = defaultCsv;
 
 CsvExporter.Export(proteoforms, csvPath);
-Console.WriteLine($"Exported to: {Path.GetFullPath(csvPath)}");
+Console.WriteLine($"Saved: {Path.GetFullPath(csvPath)}");
 
-// ── 7. Preview first 10 rows ──────────────────────────────────────────────
-Console.WriteLine("\n--- Preview (first 10 proteoforms) ---");
-Console.WriteLine($"{"Modification",-60} {"Mass (Da)",12}  {"Tolerance",12}");
-Console.WriteLine(new string('-', 88));
-foreach (var pf in proteoforms.Take(10))
-    Console.WriteLine($"{pf.Description,-60} {pf.MassFormatted,12}  {pf.ToleranceFormatted,12}");
-if (proteoforms.Count > 10)
-    Console.WriteLine($"  ... and {proteoforms.Count - 10} more rows in the CSV.");
+// ── 8. Console preview ────────────────────────────────────────────────────
+Console.WriteLine();
+Console.WriteLine($"{"Seq Pos",-22} {"Modification",-45} {"Mass (Da)",14}  {"Tol",10}  {"Source",-14}  σ (Da)");
+Console.WriteLine(new string('─', 115));
+
+foreach (var pf in proteoforms.Take(15))
+{
+    string sig = pf.Envelope is not null ? $"{pf.Envelope.Sigma:F2}" : "";
+    Console.WriteLine(
+        $"{pf.SequencePosition,-22} {pf.ModificationName,-45} {pf.CentroidMass,14:F4}  {$"+/-{pf.Tolerance:F1}",10}  {pf.Source,-14}  {sig}");
+}
+
+if (proteoforms.Count > 15)
+    Console.WriteLine($"  ... and {proteoforms.Count - 15} more rows (see CSV).");
 
 Console.WriteLine("\nDone.");
-
-// ─────────────────────────────────────────────────────────────────────────
-static Modification PromptCustomModification()
-{
-    var mod = new Modification();
-
-    Console.Write("  Modification name: ");
-    mod.Name = Console.ReadLine()?.Trim() ?? "Custom";
-
-    Console.Write("  Category (e.g., Phosphorylation, Methylation, Other): ");
-    mod.Category = Console.ReadLine()?.Trim() ?? "Custom";
-
-    while (true)
-    {
-        Console.Write("  Mass delta in Da (e.g., +79.96633 or -18.01056): ");
-        string? raw = Console.ReadLine()?.Trim();
-        if (double.TryParse(raw, System.Globalization.NumberStyles.Any,
-            System.Globalization.CultureInfo.InvariantCulture, out double delta))
-        {
-            mod.MassDelta = delta;
-            break;
-        }
-        Console.WriteLine("  Invalid number. Please enter a decimal value.");
-    }
-
-    Console.Write("  Type: (1) Residue-specific  (2) N-terminal  (3) C-terminal  [1]: ");
-    string? typeChoice = Console.ReadLine()?.Trim();
-    if (typeChoice == "2") mod.IsNTerminal = true;
-    else if (typeChoice == "3") mod.IsCTerminal = true;
-
-    if (!mod.IsNTerminal && !mod.IsCTerminal)
-    {
-        Console.Write("  Target residues (e.g., STY) or leave blank for any: ");
-        string? residues = Console.ReadLine()?.Trim().ToUpper();
-        if (!string.IsNullOrEmpty(residues))
-            mod.TargetResidues = residues.Where(c => AminoAcidMasses.Residue.ContainsKey(c)).ToList();
-    }
-    else
-    {
-        Console.Write("  Specific terminal residue required? (leave blank for any): ");
-        string? res = Console.ReadLine()?.Trim().ToUpper();
-        if (!string.IsNullOrEmpty(res))
-            mod.TargetResidues = res.Where(c => AminoAcidMasses.Residue.ContainsKey(c)).ToList();
-    }
-
-    return mod;
-}
