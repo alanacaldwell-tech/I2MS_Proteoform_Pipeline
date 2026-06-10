@@ -38,6 +38,9 @@ public class UniProtClient(HttpClient http)
 
             int pos = feature.Location?.Start?.Value ?? 0;
             string name = feature.Description ?? ftype;
+
+            if (!IsValidModName(name)) continue;
+
             double delta = KnownDeltaFromName(name);
 
             char? residue = null;
@@ -58,10 +61,18 @@ public class UniProtClient(HttpClient http)
         return (seq, ptms);
     }
 
+    // Only genuine chemical PTM feature types from UniProt.
+    // Signal/transit/propeptide are excluded: their description fields contain
+    // functional notes (e.g. "No nuclear targeting of...") not modification names.
     private static bool IsModFeature(string t) => t is
         "Modified residue" or "Glycosylation" or "Lipidation" or
-        "Cross-link" or "Disulfide bond" or "Propeptide" or
-        "Signal peptide" or "Transit peptide";
+        "Cross-link" or "Disulfide bond";
+
+    // Guard against any description that is clearly not a modification name:
+    // real PTM names are short; sentences are noise from annotation free-text.
+    private static bool IsValidModName(string name) =>
+        name.Length <= 80 && !name.Contains(". ") && !name.Contains("; No ") &&
+        !name.StartsWith("In ") && !name.StartsWith("No ");
 
     // Best-effort delta lookup for common UniProt PTM descriptions
     private static double KnownDeltaFromName(string name)

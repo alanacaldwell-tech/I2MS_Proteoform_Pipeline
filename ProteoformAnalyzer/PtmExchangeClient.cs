@@ -93,9 +93,18 @@ public class PtmExchangeClient(HttpClient http)
 
             foreach (var feat in payload.Features)
             {
-                if (feat.Category is null || feat.Type is null) continue;
+                if (feat.Type is null) continue;
+
+                // Accept only true chemical modification feature types;
+                // exclude Region, Chain, Peptide, Compositional bias, etc.
+                if (!IsPtmType(feat.Type)) continue;
+
                 int pos = feat.Begin ?? 0;
                 string name = feat.Description ?? feat.Type;
+
+                // Skip free-text sentences that are not modification names
+                if (!IsValidModName(name)) continue;
+
                 double delta = DeltaFromName(name);
 
                 char? residue = pos > 0 && pos <= sequence.Length
@@ -117,6 +126,14 @@ public class PtmExchangeClient(HttpClient http)
         }
         return result;
     }
+
+    private static bool IsPtmType(string t) => t is
+        "Modified residue" or "Glycosylation" or "Lipidation" or
+        "Cross-link" or "Disulfide bond";
+
+    private static bool IsValidModName(string name) =>
+        name.Length <= 80 && !name.Contains(". ") && !name.Contains("; No ") &&
+        !name.StartsWith("In ") && !name.StartsWith("No ");
 
     private static double DeltaFromName(string name)
     {
