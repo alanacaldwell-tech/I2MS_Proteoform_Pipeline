@@ -40,7 +40,6 @@ public class ProteoformEntry
     public string ModificationName { get; set; } = "";
     public double CentroidMass { get; set; }
     public double Tolerance { get; set; } = 5.0;
-    public string Source { get; set; } = "";
     public IsotopeEnvelope? Envelope { get; set; }
 }
 
@@ -51,8 +50,6 @@ public class IsotopeEnvelope
     public double Centroid { get; set; }
     /// <summary>Standard deviation of the envelope (Da).</summary>
     public double Sigma { get; set; }
-    /// <summary>Approximate FWHM of the envelope (Da).</summary>
-    public double Fwhm => Sigma * 2.355;
     /// <summary>Sampled (mass, relative_intensity) pairs for the bell curve.</summary>
     public List<(double Mass, double Intensity)> Points { get; set; } = new();
 }

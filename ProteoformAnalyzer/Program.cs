@@ -159,14 +159,14 @@ Console.WriteLine($"Saved: {Path.GetFullPath(csvPath)}");
 
 // ── 8. Console preview ────────────────────────────────────────────────────
 Console.WriteLine();
-Console.WriteLine($"{"Seq Pos",-22} {"Modification",-45} {"Mass (Da)",14}  {"Tol",10}  {"Source",-14}  σ (Da)");
-Console.WriteLine(new string('─', 115));
+Console.WriteLine($"{"Seq Pos",-22} {"Modification",-50} {"Mass (Da)",14}  {"Tol",10}  σ (Da)");
+Console.WriteLine(new string('─', 105));
 
 foreach (var pf in proteoforms.Take(15))
 {
     string sig = pf.Envelope is not null ? $"{pf.Envelope.Sigma:F2}" : "";
     Console.WriteLine(
-        $"{pf.SequencePosition,-22} {pf.ModificationName,-45} {pf.CentroidMass,14:F4}  {$"+/-{pf.Tolerance:F1}",10}  {pf.Source,-14}  {sig}");
+        $"{pf.SequencePosition,-22} {pf.ModificationName,-50} {pf.CentroidMass,14:F4}  {$"+/-{pf.Tolerance:F1}",10}  {sig}");
 }
 
 if (proteoforms.Count > 15)

@@ -6,8 +6,7 @@ public static class CsvExporter
     {
         using var w = new StreamWriter(path);
 
-        // Headers
-        w.WriteLine("Sequence Position,Modification Name,Proteoform Centroid Mass (Da),Tolerance Range,Source,Envelope Sigma (Da),Envelope FWHM (Da)");
+        w.WriteLine("Sequence Position,Modification Name,Proteoform Centroid Mass (Da),Tolerance Range,Envelope Sigma (Da)");
 
         foreach (var e in entries)
         {
@@ -15,11 +14,9 @@ public static class CsvExporter
             string name = Csv(e.ModificationName);
             string mass = $"{e.CentroidMass:F4}";
             string tol  = $"+/- {e.Tolerance:F1} Da";
-            string src  = Csv(e.Source);
             string sig  = e.Envelope is not null ? $"{e.Envelope.Sigma:F3}" : "";
-            string fwhm = e.Envelope is not null ? $"{e.Envelope.Fwhm:F3}" : "";
 
-            w.WriteLine($"{pos},{name},{mass},{tol},{src},{sig},{fwhm}");
+            w.WriteLine($"{pos},{name},{mass},{tol},{sig}");
         }
     }
 
