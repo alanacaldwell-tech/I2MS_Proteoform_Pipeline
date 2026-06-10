@@ -150,12 +150,35 @@ Console.WriteLine($"Generated {proteoforms.Count} proteoform entries.");
 
 // ── 7. Export CSV ─────────────────────────────────────────────────────────
 string defaultCsv = uniprotId is not null ? $"{uniprotId}_proteoforms.csv" : "proteoforms.csv";
-Console.Write($"\nOutput CSV path (default: {defaultCsv}): ");
-string? csvPath = Console.ReadLine()?.Trim();
-if (string.IsNullOrEmpty(csvPath)) csvPath = defaultCsv;
 
-CsvExporter.Export(proteoforms, csvPath);
-Console.WriteLine($"Saved: {Path.GetFullPath(csvPath)}");
+string csvPath;
+while (true)
+{
+    Console.Write($"\nOutput CSV path (press Enter for default: {defaultCsv}): ");
+    string? raw = Console.ReadLine()?.Trim().Trim('"');  // strip surrounding quotes Windows may add
+    csvPath = string.IsNullOrEmpty(raw) ? defaultCsv : raw;
+
+    // Ensure the directory exists
+    string? dir = Path.GetDirectoryName(csvPath);
+    if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
+    {
+        Console.WriteLine($"  Directory not found: {dir}");
+        Console.WriteLine("  Please enter a path whose folder already exists.");
+        continue;
+    }
+
+    try
+    {
+        CsvExporter.Export(proteoforms, csvPath);
+        Console.WriteLine($"Saved: {Path.GetFullPath(csvPath)}");
+        break;
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"  Could not save to that path: {ex.Message}");
+        Console.WriteLine("  Please enter a different path.");
+    }
+}
 
 // ── 8. Console preview ────────────────────────────────────────────────────
 Console.WriteLine();
