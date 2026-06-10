@@ -158,6 +158,10 @@ while (true)
     string? raw = Console.ReadLine()?.Trim().Trim('"');  // strip surrounding quotes Windows may add
     csvPath = string.IsNullOrEmpty(raw) ? defaultCsv : raw;
 
+    // Ensure the path ends with a .csv filename, not a bare folder or extension-less name
+    if (!Path.GetFileName(csvPath).Contains('.'))
+        csvPath += ".csv";
+
     // Ensure the directory exists
     string? dir = Path.GetDirectoryName(csvPath);
     if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
