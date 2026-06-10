@@ -12,7 +12,43 @@ http.DefaultRequestHeaders.Add("User-Agent", "ProteoformAnalyzer/2.0 (research t
 http.DefaultRequestHeaders.Add("Accept", "application/json");
 http.Timeout = TimeSpan.FromSeconds(30);
 
-// ── 1. Sequence or UniProt ID ─────────────────────────────────────────────
+// ── Mode selection ────────────────────────────────────────────────────────
+Console.WriteLine("Select mode:");
+Console.WriteLine("  1  Interactive  — enter one protein sequence or UniProt ID");
+Console.WriteLine("  2  Batch CSV    — provide a CSV file containing multiple proteins");
+Console.Write("> ");
+string? modeInput = Console.ReadLine()?.Trim();
+Console.WriteLine();
+
+if (modeInput == "2")
+{
+    // ── Batch CSV options ─────────────────────────────────────────────────
+    string batchCsvPath;
+    while (true)
+    {
+        Console.Write("Path to input CSV file: ");
+        batchCsvPath = Console.ReadLine()?.Trim().Trim('"') ?? "";
+        if (File.Exists(batchCsvPath)) break;
+        Console.WriteLine($"  File not found: {batchCsvPath}");
+    }
+
+    Console.Write("Include N- and C-terminal truncations? (y/n, default y): ");
+    bool batchTrunc = (Console.ReadLine()?.Trim().ToLower() ?? "y") != "n";
+
+    double batchTol = 5.0;
+    Console.Write("Mass tolerance in Da (default 5.0): ");
+    string? batchTolStr = Console.ReadLine()?.Trim();
+    if (!string.IsNullOrEmpty(batchTolStr) &&
+        double.TryParse(batchTolStr, System.Globalization.NumberStyles.Any,
+            System.Globalization.CultureInfo.InvariantCulture, out double bt) && bt > 0)
+        batchTol = bt;
+
+    Console.WriteLine();
+    await CsvBatchMode.RunAsync(batchCsvPath, http, batchTrunc, batchTol);
+    return;
+}
+
+// ── 1. Sequence or UniProt ID (interactive mode) ──────────────────────────
 string sequence = "";
 string? uniprotId = null;
 
