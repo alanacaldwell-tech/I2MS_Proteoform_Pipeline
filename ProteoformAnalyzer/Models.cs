@@ -36,7 +36,6 @@ public class PtmAnnotation
 /// <summary>One row in the output CSV.</summary>
 public class ProteoformEntry
 {
-    public string SequencePosition { get; set; } = "";
     public string ModificationName { get; set; } = "";
     public double CentroidMass { get; set; }
     public double Tolerance { get; set; } = 5.0;

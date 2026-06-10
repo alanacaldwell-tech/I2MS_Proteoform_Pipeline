@@ -8,20 +8,19 @@ public static class CsvExporter
         using var w = new StreamWriter(path);
 
         // Header
-        var header = "Sequence Position,Modification Name,Proteoform Centroid Mass (Da),Tolerance Range,Envelope Sigma (Da)";
+        var header = "Modification Name,Proteoform Centroid Mass (Da),Tolerance Range,Envelope Sigma (Da)";
         if (dmtFileNames is { Count: > 0 })
             header += "," + string.Join(",", dmtFileNames.Select(Csv));
         w.WriteLine(header);
 
         foreach (var e in entries)
         {
-            string pos  = Csv(e.SequencePosition);
             string name = Csv(e.ModificationName);
             string mass = $"{e.CentroidMass:F4}";
             string tol  = $"+/- {e.Tolerance:F1} Da";
             string sig  = e.Envelope is not null ? $"{e.Envelope.Sigma:F3}" : "";
 
-            string row = $"{pos},{name},{mass},{tol},{sig}";
+            string row = $"{name},{mass},{tol},{sig}";
 
             if (dmtFileNames is { Count: > 0 } && e.IonCounts is not null)
             {

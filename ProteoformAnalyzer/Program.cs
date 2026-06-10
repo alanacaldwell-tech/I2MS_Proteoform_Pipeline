@@ -247,9 +247,9 @@ while (true)
 
 // ── 9. Console preview ────────────────────────────────────────────────────
 Console.WriteLine();
-Console.WriteLine($"{"Seq Pos",-22} {"Modification",-45} {"Mass (Da)",14}  {"Tol",10}  σ (Da)" +
+Console.WriteLine($"{"Modification",-55} {"Mass (Da)",14}  {"Tol",10}  σ (Da)" +
     (dmtFileNames.Count > 0 ? "  Total Ions" : ""));
-Console.WriteLine(new string('─', dmtFileNames.Count > 0 ? 120 : 105));
+Console.WriteLine(new string('─', dmtFileNames.Count > 0 ? 110 : 95));
 
 foreach (var pf in proteoforms.Take(15))
 {
@@ -258,7 +258,7 @@ foreach (var pf in proteoforms.Take(15))
         ? $"  {pf.IonCounts.Values.Sum(),10:N0}"
         : "";
     Console.WriteLine(
-        $"{pf.SequencePosition,-22} {pf.ModificationName,-45} {pf.CentroidMass,14:F4}  {$"+/-{pf.Tolerance:F1}",10}  {sig}{totalIons}");
+        $"{pf.ModificationName,-55} {pf.CentroidMass,14:F4}  {$"+/-{pf.Tolerance:F1}",10}  {sig}{totalIons}");
 }
 
 if (proteoforms.Count > 15)
