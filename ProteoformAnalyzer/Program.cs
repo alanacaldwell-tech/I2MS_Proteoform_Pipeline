@@ -16,9 +16,16 @@ http.Timeout = TimeSpan.FromSeconds(30);
 Console.WriteLine("Select mode:");
 Console.WriteLine("  1  Interactive  — enter one protein sequence or UniProt ID");
 Console.WriteLine("  2  Batch CSV    — provide a CSV file containing multiple proteins");
+Console.WriteLine("  3  DMT Viewer   — upload a .dmt file and view the 1-Da mass histogram");
 Console.Write("> ");
 string? modeInput = Console.ReadLine()?.Trim();
 Console.WriteLine();
+
+if (modeInput == "3")
+{
+    DmtHistogramViewer.Run();
+    return;
+}
 
 if (modeInput == "2")
 {
