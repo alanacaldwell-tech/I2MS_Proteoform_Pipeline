@@ -177,37 +177,100 @@ Console.WriteLine();
 Console.Write("Include N- and C-terminal truncations? (y/n, default y): ");
 bool includeTrunc = (Console.ReadLine()?.Trim().ToLower() ?? "y") != "n";
 
-double tolerance = 5.0;
-Console.Write("Mass tolerance in Da (default 5.0): ");
-string? tolStr = Console.ReadLine()?.Trim();
-if (!string.IsNullOrEmpty(tolStr) &&
-    double.TryParse(tolStr, System.Globalization.NumberStyles.Any,
-        System.Globalization.CultureInfo.InvariantCulture, out double parsedTol) && parsedTol > 0)
-    tolerance = parsedTol;
-
-// ── 6. Build proteoforms ──────────────────────────────────────────────────
+// ── 6. Build proteoform database ──────────────────────────────────────────
 Console.WriteLine();
-Console.WriteLine($"Building proteoform list (truncations: {includeTrunc}, tolerance ±{tolerance} Da)...");
+Console.WriteLine($"Building proteoform database (truncations: {includeTrunc})...");
+var proteoforms = ProteoformBuilder.Build(sequence, allPtms, includeTrunc, tolerance: 5.0);
+Console.WriteLine($"Generated {proteoforms.Count} database entries.");
 
-var proteoforms = ProteoformBuilder.Build(sequence, allPtms, includeTrunc, tolerance);
-Console.WriteLine($"Generated {proteoforms.Count} proteoform entries.");
-
-// ── 7. Count ions from .dmt files ────────────────────────────────────────
+// ── 7. .dmt spectrum analysis ─────────────────────────────────────────────
 Console.WriteLine();
 Console.Write("Path to folder containing .dmt files (press Enter to skip): ");
 string? dmtFolder = Console.ReadLine()?.Trim().Trim('"');
 
+double defaultTol = 5.0;
 List<string> dmtFileNames = new();
+List<AnalysisResult> analysisResults = new();
+
 if (!string.IsNullOrEmpty(dmtFolder))
 {
     if (!Directory.Exists(dmtFolder))
     {
-        Console.WriteLine("  Folder not found — skipping ion counting.");
+        Console.WriteLine("  Folder not found — skipping spectrum analysis.");
     }
     else
     {
-        Console.WriteLine();
-        dmtFileNames = DmtIonCounter.CountIons(proteoforms, dmtFolder);
+        Console.Write("Ion-counting tolerance in Da (default 5.0, shrinks automatically between nearby peaks): ");
+        string? tolStr = Console.ReadLine()?.Trim();
+        if (!string.IsNullOrEmpty(tolStr) &&
+            double.TryParse(tolStr, System.Globalization.NumberStyles.Any,
+                System.Globalization.CultureInfo.InvariantCulture, out double pt) && pt > 0)
+            defaultTol = pt;
+
+        var dmtFiles = Directory.GetFiles(dmtFolder, "*.dmt", SearchOption.TopDirectoryOnly)
+                                .OrderBy(f => f).ToArray();
+        if (dmtFiles.Length == 0)
+        {
+            Console.WriteLine("  No .dmt files found.");
+        }
+        else
+        {
+            dmtFileNames = dmtFiles.Select(Path.GetFileName).ToList()!;
+            Console.WriteLine($"  Found {dmtFiles.Length} .dmt file(s).");
+            Console.WriteLine();
+
+            // Accumulate results: key = (modName, predictedMass)
+            var resultMap = new Dictionary<(string, double), AnalysisResult>();
+
+            for (int f = 0; f < dmtFiles.Length; f++)
+            {
+                string fileName = dmtFileNames[f];
+                Console.Write($"  [{f + 1}/{dmtFiles.Length}] {fileName} — binning & peak-finding ... ");
+
+                try
+                {
+                    var matches = SpectrumAnalyzer.ProcessFile(dmtFiles[f], proteoforms, defaultTol);
+                    long totalIons = matches.Sum(m => m.IonCount);
+                    Console.WriteLine($"{matches.Count} peak match(es), {totalIons:N0} ions");
+
+                    foreach (var (entry, exptCentroid, ionCount) in matches)
+                    {
+                        var key = (entry.ModificationName, entry.CentroidMass);
+                        if (!resultMap.TryGetValue(key, out var ar))
+                        {
+                            ar = new AnalysisResult { DatabaseEntry = entry };
+                            resultMap[key] = ar;
+                        }
+                        // Accumulate experimental centroid for later averaging
+                        ar.MeanExperimentalCentroid += exptCentroid;
+                        ar.IonCountsPerFile[fileName] = ionCount;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"ERROR — {ex.Message}");
+                }
+            }
+
+            // Finalise mean experimental centroids
+            foreach (var ar in resultMap.Values)
+            {
+                int matchedFiles = ar.IonCountsPerFile.Count;
+                if (matchedFiles > 0)
+                    ar.MeanExperimentalCentroid /= matchedFiles;
+            }
+
+            // Fill zeros for files where a proteoform was not matched
+            analysisResults = resultMap.Values
+                .OrderBy(r => r.DatabaseEntry.ModificationName)
+                .ToList();
+
+            foreach (var ar in analysisResults)
+                foreach (var fn in dmtFileNames)
+                    ar.IonCountsPerFile.TryAdd(fn, 0);
+
+            Console.WriteLine($"\n  {analysisResults.Count} unique proteoform(s) matched across all files.");
+        }
     }
 }
 
@@ -228,40 +291,49 @@ while (true)
     if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
     {
         Console.WriteLine($"  Directory not found: {dir}");
-        Console.WriteLine("  Please enter a path whose folder already exists.");
         continue;
     }
 
     try
     {
-        CsvExporter.Export(proteoforms, csvPath, dmtFileNames.Count > 0 ? dmtFileNames : null);
+        if (analysisResults.Count > 0)
+            CsvExporter.ExportResults(analysisResults, dmtFileNames, csvPath);
+        else
+            CsvExporter.ExportDatabase(proteoforms, csvPath);
+
         Console.WriteLine($"Saved: {Path.GetFullPath(csvPath)}");
         break;
     }
     catch (Exception ex)
     {
-        Console.WriteLine($"  Could not save to that path: {ex.Message}");
-        Console.WriteLine("  Please enter a different path.");
+        Console.WriteLine($"  Could not save: {ex.Message}");
     }
 }
 
 // ── 9. Console preview ────────────────────────────────────────────────────
 Console.WriteLine();
-Console.WriteLine($"{"Modification",-55} {"Mass (Da)",14}  {"Tol",10}  σ (Da)" +
-    (dmtFileNames.Count > 0 ? "  Total Ions" : ""));
-Console.WriteLine(new string('─', dmtFileNames.Count > 0 ? 110 : 95));
-
-foreach (var pf in proteoforms.Take(15))
+if (analysisResults.Count > 0)
 {
-    string sig = pf.Envelope is not null ? $"{pf.Envelope.Sigma:F2}" : "";
-    string totalIons = dmtFileNames.Count > 0 && pf.IonCounts is not null
-        ? $"  {pf.IonCounts.Values.Sum(),10:N0}"
-        : "";
-    Console.WriteLine(
-        $"{pf.ModificationName,-55} {pf.CentroidMass,14:F4}  {$"+/-{pf.Tolerance:F1}",10}  {sig}{totalIons}");
+    Console.WriteLine($"{"Modification",-50} {"Pred. Mass",14}  {"Expt. Centroid",15}  {"Total Ions",12}");
+    Console.WriteLine(new string('─', 97));
+    foreach (var r in analysisResults.Take(15))
+    {
+        long total = r.IonCountsPerFile.Values.Sum();
+        Console.WriteLine($"{r.DatabaseEntry.ModificationName,-50} " +
+                          $"{r.DatabaseEntry.CentroidMass,14:F4}  " +
+                          $"{r.MeanExperimentalCentroid,15:F4}  {total,12:N0}");
+    }
+    if (analysisResults.Count > 15)
+        Console.WriteLine($"  ... and {analysisResults.Count - 15} more (see CSV).");
 }
-
-if (proteoforms.Count > 15)
-    Console.WriteLine($"  ... and {proteoforms.Count - 15} more rows (see CSV).");
+else
+{
+    Console.WriteLine($"{"Modification",-55} {"Pred. Mass (Da)",16}");
+    Console.WriteLine(new string('─', 73));
+    foreach (var pf in proteoforms.Take(15))
+        Console.WriteLine($"{pf.ModificationName,-55} {pf.CentroidMass,16:F4}");
+    if (proteoforms.Count > 15)
+        Console.WriteLine($"  ... and {proteoforms.Count - 15} more (see CSV).");
+}
 
 Console.WriteLine("\nDone.");

@@ -2,33 +2,52 @@ namespace ProteoformAnalyzer;
 
 public static class CsvExporter
 {
-    public static void Export(List<ProteoformEntry> entries, string path,
-                              IReadOnlyList<string>? dmtFileNames = null)
+    /// <summary>
+    /// Exports the proteoform database without experimental data (no .dmt files processed).
+    /// Columns: Modification Name, Predicted Centroid Mass (Da), Tolerance Range, Envelope Sigma (Da)
+    /// </summary>
+    public static void ExportDatabase(List<ProteoformEntry> entries, string path)
+    {
+        using var w = new StreamWriter(path);
+        w.WriteLine("Modification Name,Predicted Centroid Mass (Da),Tolerance Range,Envelope Sigma (Da)");
+
+        foreach (var e in entries)
+        {
+            w.WriteLine($"{Csv(e.ModificationName)},{e.CentroidMass:F4}," +
+                        $"+/- {e.Tolerance:F1} Da," +
+                        $"{(e.Envelope is not null ? e.Envelope.Sigma.ToString("F3") : "")}");
+        }
+    }
+
+    /// <summary>
+    /// Exports matched proteoforms with experimental centroids and per-file ion counts.
+    /// Columns: Modification Name | Predicted Mass (Da) | Experimental Centroid (Da) | [file1] | [file2] | ...
+    /// Only proteoforms matched in at least one file are included.
+    /// </summary>
+    public static void ExportResults(
+        List<AnalysisResult> results,
+        IReadOnlyList<string> fileNames,
+        string path)
     {
         using var w = new StreamWriter(path);
 
         // Header
-        var header = "Modification Name,Proteoform Centroid Mass (Da),Tolerance Range,Envelope Sigma (Da)";
-        if (dmtFileNames is { Count: > 0 })
-            header += "," + string.Join(",", dmtFileNames.Select(Csv));
+        var header = "Modification Name,Predicted Centroid Mass (Da),Experimental Centroid (Da)";
+        foreach (var fn in fileNames)
+            header += $",{Csv(fn)} Ion Count";
         w.WriteLine(header);
 
-        foreach (var e in entries)
+        foreach (var r in results)
         {
-            string name = Csv(e.ModificationName);
-            string mass = $"{e.CentroidMass:F4}";
-            string tol  = $"+/- {e.Tolerance:F1} Da";
-            string sig  = e.Envelope is not null ? $"{e.Envelope.Sigma:F3}" : "";
+            string name  = Csv(r.DatabaseEntry.ModificationName);
+            string pred  = r.DatabaseEntry.CentroidMass.ToString("F4");
+            string expt  = r.MeanExperimentalCentroid.ToString("F4");
+            string row   = $"{name},{pred},{expt}";
 
-            string row = $"{name},{mass},{tol},{sig}";
-
-            if (dmtFileNames is { Count: > 0 } && e.IonCounts is not null)
+            foreach (var fn in fileNames)
             {
-                foreach (string fn in dmtFileNames)
-                {
-                    long count = e.IonCounts.TryGetValue(fn, out long c) ? c : 0;
-                    row += $",{count}";
-                }
+                long cnt = r.IonCountsPerFile.TryGetValue(fn, out long c) ? c : 0;
+                row += $",{cnt}";
             }
 
             w.WriteLine(row);

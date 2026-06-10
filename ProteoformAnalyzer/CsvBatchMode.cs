@@ -26,7 +26,7 @@ public static class CsvBatchMode
         string inputCsvPath,
         HttpClient http,
         bool includeTruncations,
-        double tolerance,
+        double defaultTolerance = 5.0,
         string? dmtFolder = null)
     {
         // ── Parse input CSV ───────────────────────────────────────────────
@@ -77,11 +77,11 @@ public static class CsvBatchMode
                 var ptmExClient = new PtmExchangeClient(http);
                 allPtms.AddRange(await ptmExClient.FetchAsync(uniprotId, sequence));
 
-                // Build, count ions, export
-                var proteoforms = ProteoformBuilder.Build(sequence, allPtms, includeTruncations, tolerance);
-                var fileNames = CountIfProvided(proteoforms, dmtFolder);
+                // Build database and run spectrum analysis
+                var proteoforms = ProteoformBuilder.Build(sequence, allPtms, includeTruncations, tolerance: 5.0);
+                var (results, fileNames) = AnalyzeIfProvided(proteoforms, dmtFolder, defaultTolerance);
                 string outPath = ResolveOutputPath(proteinInput, customOutputPath, inputDir);
-                ExportSafe(proteoforms, outPath, fileNames);
+                ExportSafe(proteoforms, results, fileNames, outPath);
                 success++;
             }
             else if (AminoAcidData.IsValidSequence(proteinInput))
@@ -89,10 +89,10 @@ public static class CsvBatchMode
                 sequence = proteinInput.ToUpper();
                 Console.WriteLine($"  Treating as raw sequence ({sequence.Length} aa). No database query.");
 
-                var proteoforms = ProteoformBuilder.Build(sequence, new List<PtmAnnotation>(), includeTruncations, tolerance);
-                var fileNames = CountIfProvided(proteoforms, dmtFolder);
+                var proteoforms = ProteoformBuilder.Build(sequence, new List<PtmAnnotation>(), includeTruncations, tolerance: 5.0);
+                var (results, fileNames) = AnalyzeIfProvided(proteoforms, dmtFolder, defaultTolerance);
                 string outPath = ResolveOutputPath($"sequence_{i + 1}", customOutputPath, inputDir);
-                ExportSafe(proteoforms, outPath, fileNames);
+                ExportSafe(proteoforms, results, fileNames, outPath);
                 success++;
             }
             else
@@ -172,21 +172,69 @@ public static class CsvBatchMode
         return Path.Combine(inputDir, $"{safe}_proteoforms.csv");
     }
 
-    private static List<string> CountIfProvided(List<ProteoformEntry> proteoforms, string? dmtFolder)
+    private static (List<AnalysisResult> results, List<string> fileNames)
+        AnalyzeIfProvided(List<ProteoformEntry> proteoforms, string? dmtFolder, double defaultTol)
     {
+        var emptyFileNames = new List<string>();
         if (string.IsNullOrEmpty(dmtFolder) || !Directory.Exists(dmtFolder))
-            return new List<string>();
-        return DmtIonCounter.CountIons(proteoforms, dmtFolder);
+            return (new List<AnalysisResult>(), emptyFileNames);
+
+        var dmtFiles = Directory.GetFiles(dmtFolder, "*.dmt", SearchOption.TopDirectoryOnly)
+                                .OrderBy(f => f).ToArray();
+        if (dmtFiles.Length == 0)
+            return (new List<AnalysisResult>(), emptyFileNames);
+
+        var fileNames = dmtFiles.Select(Path.GetFileName).ToList()!;
+        var resultMap = new Dictionary<(string, double), AnalysisResult>();
+
+        foreach (var (filePath, fileName) in dmtFiles.Zip(fileNames))
+        {
+            try
+            {
+                var matches = SpectrumAnalyzer.ProcessFile(filePath, proteoforms, defaultTol);
+                foreach (var (entry, centroid, count) in matches)
+                {
+                    var key = (entry.ModificationName, entry.CentroidMass);
+                    if (!resultMap.TryGetValue(key, out var ar))
+                    {
+                        ar = new AnalysisResult { DatabaseEntry = entry };
+                        resultMap[key] = ar;
+                    }
+                    ar.MeanExperimentalCentroid += centroid;
+                    ar.IonCountsPerFile[fileName] = count;
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"  Warning: could not process {fileName} — {ex.Message}");
+            }
+        }
+
+        var results = resultMap.Values.ToList();
+        foreach (var ar in results)
+        {
+            int n = ar.IonCountsPerFile.Count;
+            if (n > 0) ar.MeanExperimentalCentroid /= n;
+            foreach (var fn in fileNames) ar.IonCountsPerFile.TryAdd(fn, 0);
+        }
+
+        Console.WriteLine($"  {results.Count} proteoform(s) matched across {fileNames.Count} file(s).");
+        return (results, fileNames);
     }
 
-    private static void ExportSafe(List<ProteoformEntry> proteoforms, string outputPath,
-                                   List<string>? dmtFileNames = null)
+    private static void ExportSafe(
+        List<ProteoformEntry> proteoforms,
+        List<AnalysisResult> results,
+        List<string> fileNames,
+        string outputPath)
     {
         try
         {
-            CsvExporter.Export(proteoforms, outputPath,
-                dmtFileNames is { Count: > 0 } ? dmtFileNames : null);
-            Console.WriteLine($"  Saved {proteoforms.Count} proteoforms → {outputPath}");
+            if (results.Count > 0)
+                CsvExporter.ExportResults(results, fileNames, outputPath);
+            else
+                CsvExporter.ExportDatabase(proteoforms, outputPath);
+            Console.WriteLine($"  Saved → {outputPath}");
         }
         catch (Exception ex)
         {

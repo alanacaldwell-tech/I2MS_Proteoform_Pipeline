@@ -30,15 +30,13 @@ public class PtmAnnotation
     public string Source { get; set; } = "";
 }
 
-/// <summary>One row in the output CSV.</summary>
+/// <summary>One entry in the proteoform database (predicted proteoform).</summary>
 public class ProteoformEntry
 {
     public string ModificationName { get; set; } = "";
-    public double CentroidMass { get; set; }
-    public double Tolerance { get; set; } = 5.0;
+    public double CentroidMass { get; set; }       // predicted centroid (Da)
+    public double Tolerance { get; set; } = 5.0;   // kept for ProteoformBuilder; overridden by adaptive value at match time
     public IsotopeEnvelope? Envelope { get; set; }
-    // Populated after .dmt processing: filename → ion count
-    public Dictionary<string, long>? IonCounts { get; set; }
 }
 
 /// <summary>Isotopic envelope summary from the distribution calculation.</summary>
