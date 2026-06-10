@@ -41,6 +41,8 @@ public class ProteoformEntry
     public double CentroidMass { get; set; }
     public double Tolerance { get; set; } = 5.0;
     public IsotopeEnvelope? Envelope { get; set; }
+    // Populated after .dmt processing: filename → ion count
+    public Dictionary<string, long>? IonCounts { get; set; }
 }
 
 /// <summary>Isotopic envelope summary from the distribution calculation.</summary>

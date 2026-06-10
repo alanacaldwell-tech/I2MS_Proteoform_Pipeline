@@ -43,8 +43,16 @@ if (modeInput == "2")
             System.Globalization.CultureInfo.InvariantCulture, out double bt) && bt > 0)
         batchTol = bt;
 
+    Console.Write("Path to folder containing .dmt files (press Enter to skip): ");
+    string? batchDmtFolder = Console.ReadLine()?.Trim().Trim('"');
+    if (!string.IsNullOrEmpty(batchDmtFolder) && !Directory.Exists(batchDmtFolder))
+    {
+        Console.WriteLine("  Folder not found — skipping ion counting.");
+        batchDmtFolder = null;
+    }
+
     Console.WriteLine();
-    await CsvBatchMode.RunAsync(batchCsvPath, http, batchTrunc, batchTol);
+    await CsvBatchMode.RunAsync(batchCsvPath, http, batchTrunc, batchTol, batchDmtFolder);
     return;
 }
 
@@ -184,21 +192,38 @@ Console.WriteLine($"Building proteoform list (truncations: {includeTrunc}, toler
 var proteoforms = ProteoformBuilder.Build(sequence, allPtms, includeTrunc, tolerance);
 Console.WriteLine($"Generated {proteoforms.Count} proteoform entries.");
 
-// ── 7. Export CSV ─────────────────────────────────────────────────────────
+// ── 7. Count ions from .dmt files ────────────────────────────────────────
+Console.WriteLine();
+Console.Write("Path to folder containing .dmt files (press Enter to skip): ");
+string? dmtFolder = Console.ReadLine()?.Trim().Trim('"');
+
+List<string> dmtFileNames = new();
+if (!string.IsNullOrEmpty(dmtFolder))
+{
+    if (!Directory.Exists(dmtFolder))
+    {
+        Console.WriteLine("  Folder not found — skipping ion counting.");
+    }
+    else
+    {
+        Console.WriteLine();
+        dmtFileNames = DmtIonCounter.CountIons(proteoforms, dmtFolder);
+    }
+}
+
+// ── 8. Export CSV ─────────────────────────────────────────────────────────
 string defaultCsv = uniprotId is not null ? $"{uniprotId}_proteoforms.csv" : "proteoforms.csv";
 
 string csvPath;
 while (true)
 {
     Console.Write($"\nOutput CSV path (press Enter for default: {defaultCsv}): ");
-    string? raw = Console.ReadLine()?.Trim().Trim('"');  // strip surrounding quotes Windows may add
+    string? raw = Console.ReadLine()?.Trim().Trim('"');
     csvPath = string.IsNullOrEmpty(raw) ? defaultCsv : raw;
 
-    // Ensure the path ends with a .csv filename, not a bare folder or extension-less name
     if (!Path.GetFileName(csvPath).Contains('.'))
         csvPath += ".csv";
 
-    // Ensure the directory exists
     string? dir = Path.GetDirectoryName(csvPath);
     if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
     {
@@ -209,7 +234,7 @@ while (true)
 
     try
     {
-        CsvExporter.Export(proteoforms, csvPath);
+        CsvExporter.Export(proteoforms, csvPath, dmtFileNames.Count > 0 ? dmtFileNames : null);
         Console.WriteLine($"Saved: {Path.GetFullPath(csvPath)}");
         break;
     }
@@ -220,16 +245,20 @@ while (true)
     }
 }
 
-// ── 8. Console preview ────────────────────────────────────────────────────
+// ── 9. Console preview ────────────────────────────────────────────────────
 Console.WriteLine();
-Console.WriteLine($"{"Seq Pos",-22} {"Modification",-50} {"Mass (Da)",14}  {"Tol",10}  σ (Da)");
-Console.WriteLine(new string('─', 105));
+Console.WriteLine($"{"Seq Pos",-22} {"Modification",-45} {"Mass (Da)",14}  {"Tol",10}  σ (Da)" +
+    (dmtFileNames.Count > 0 ? "  Total Ions" : ""));
+Console.WriteLine(new string('─', dmtFileNames.Count > 0 ? 120 : 105));
 
 foreach (var pf in proteoforms.Take(15))
 {
     string sig = pf.Envelope is not null ? $"{pf.Envelope.Sigma:F2}" : "";
+    string totalIons = dmtFileNames.Count > 0 && pf.IonCounts is not null
+        ? $"  {pf.IonCounts.Values.Sum(),10:N0}"
+        : "";
     Console.WriteLine(
-        $"{pf.SequencePosition,-22} {pf.ModificationName,-50} {pf.CentroidMass,14:F4}  {$"+/-{pf.Tolerance:F1}",10}  {sig}");
+        $"{pf.SequencePosition,-22} {pf.ModificationName,-45} {pf.CentroidMass,14:F4}  {$"+/-{pf.Tolerance:F1}",10}  {sig}{totalIons}");
 }
 
 if (proteoforms.Count > 15)

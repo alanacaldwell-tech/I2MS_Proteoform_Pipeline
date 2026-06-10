@@ -26,7 +26,8 @@ public static class CsvBatchMode
         string inputCsvPath,
         HttpClient http,
         bool includeTruncations,
-        double tolerance)
+        double tolerance,
+        string? dmtFolder = null)
     {
         // ── Parse input CSV ───────────────────────────────────────────────
         var rows = ReadInputCsv(inputCsvPath);
@@ -76,10 +77,11 @@ public static class CsvBatchMode
                 var ptmExClient = new PtmExchangeClient(http);
                 allPtms.AddRange(await ptmExClient.FetchAsync(uniprotId, sequence));
 
-                // Build and export
+                // Build, count ions, export
                 var proteoforms = ProteoformBuilder.Build(sequence, allPtms, includeTruncations, tolerance);
+                var fileNames = CountIfProvided(proteoforms, dmtFolder);
                 string outPath = ResolveOutputPath(proteinInput, customOutputPath, inputDir);
-                ExportSafe(proteoforms, outPath);
+                ExportSafe(proteoforms, outPath, fileNames);
                 success++;
             }
             else if (AminoAcidData.IsValidSequence(proteinInput))
@@ -88,8 +90,9 @@ public static class CsvBatchMode
                 Console.WriteLine($"  Treating as raw sequence ({sequence.Length} aa). No database query.");
 
                 var proteoforms = ProteoformBuilder.Build(sequence, new List<PtmAnnotation>(), includeTruncations, tolerance);
+                var fileNames = CountIfProvided(proteoforms, dmtFolder);
                 string outPath = ResolveOutputPath($"sequence_{i + 1}", customOutputPath, inputDir);
-                ExportSafe(proteoforms, outPath);
+                ExportSafe(proteoforms, outPath, fileNames);
                 success++;
             }
             else
@@ -169,11 +172,20 @@ public static class CsvBatchMode
         return Path.Combine(inputDir, $"{safe}_proteoforms.csv");
     }
 
-    private static void ExportSafe(List<ProteoformEntry> proteoforms, string outputPath)
+    private static List<string> CountIfProvided(List<ProteoformEntry> proteoforms, string? dmtFolder)
+    {
+        if (string.IsNullOrEmpty(dmtFolder) || !Directory.Exists(dmtFolder))
+            return new List<string>();
+        return DmtIonCounter.CountIons(proteoforms, dmtFolder);
+    }
+
+    private static void ExportSafe(List<ProteoformEntry> proteoforms, string outputPath,
+                                   List<string>? dmtFileNames = null)
     {
         try
         {
-            CsvExporter.Export(proteoforms, outputPath);
+            CsvExporter.Export(proteoforms, outputPath,
+                dmtFileNames is { Count: > 0 } ? dmtFileNames : null);
             Console.WriteLine($"  Saved {proteoforms.Count} proteoforms → {outputPath}");
         }
         catch (Exception ex)

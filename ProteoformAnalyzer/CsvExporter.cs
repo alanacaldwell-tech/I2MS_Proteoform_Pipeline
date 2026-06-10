@@ -2,11 +2,16 @@ namespace ProteoformAnalyzer;
 
 public static class CsvExporter
 {
-    public static void Export(List<ProteoformEntry> entries, string path)
+    public static void Export(List<ProteoformEntry> entries, string path,
+                              IReadOnlyList<string>? dmtFileNames = null)
     {
         using var w = new StreamWriter(path);
 
-        w.WriteLine("Sequence Position,Modification Name,Proteoform Centroid Mass (Da),Tolerance Range,Envelope Sigma (Da)");
+        // Header
+        var header = "Sequence Position,Modification Name,Proteoform Centroid Mass (Da),Tolerance Range,Envelope Sigma (Da)";
+        if (dmtFileNames is { Count: > 0 })
+            header += "," + string.Join(",", dmtFileNames.Select(Csv));
+        w.WriteLine(header);
 
         foreach (var e in entries)
         {
@@ -16,7 +21,18 @@ public static class CsvExporter
             string tol  = $"+/- {e.Tolerance:F1} Da";
             string sig  = e.Envelope is not null ? $"{e.Envelope.Sigma:F3}" : "";
 
-            w.WriteLine($"{pos},{name},{mass},{tol},{sig}");
+            string row = $"{pos},{name},{mass},{tol},{sig}";
+
+            if (dmtFileNames is { Count: > 0 } && e.IonCounts is not null)
+            {
+                foreach (string fn in dmtFileNames)
+                {
+                    long count = e.IonCounts.TryGetValue(fn, out long c) ? c : 0;
+                    row += $",{count}";
+                }
+            }
+
+            w.WriteLine(row);
         }
     }
 
