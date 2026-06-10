@@ -12,7 +12,7 @@ public static class ProteoformBuilder
         var intactFormula = AminoAcidData.GetFormula(sequence);
         var intactEnvelope = IsotopeCalculator.Compute(intactFormula);
 
-        // ── 1. Intact, unmodified proteoform ──────────────────────────────
+        // ── 1. Intact, unmodified ─────────────────────────────────────────
         entries.Add(new ProteoformEntry
         {
             ModificationName = "Unmodified (intact)",
@@ -21,12 +21,64 @@ public static class ProteoformBuilder
             Envelope = intactEnvelope
         });
 
-        // ── 2. Group PTMs by modification family across all sources ───────
-        // Each family produces mono/di/tri/... proteoforms based on the
-        // number of distinct sites found in the database annotations.
-        var byFamily = allPtms
-            .Where(p => !p.IsNTerminalTruncation && !p.IsCTerminalTruncation)
-            // First collapse identical sites (same family + same position)
+        // ── 2. Build PTM family groups (shared by PTM-only and combinations)
+        var ptmFamilies = BuildFamilyGroups(allPtms);
+
+        // ── 3. PTM-only proteoforms (no truncation) ───────────────────────
+        foreach (var family in ptmFamilies)
+            foreach (var entry in MakePtmEntries(family, intactFormula, tolerance))
+                entries.Add(entry);
+
+        // ── 4. Truncations and truncation+PTM combinations ────────────────
+        if (includeTruncations && sequence.Length > 1)
+        {
+            var truncations = TruncationGenerator.Generate(sequence);
+
+            int combinationCount = truncations.Count
+                * (1 + ptmFamilies.Sum(f => f.SiteCount));
+            if (combinationCount > 50_000)
+                Console.WriteLine($"  [Warning] Generating {combinationCount:N0} truncation+PTM " +
+                                  "combination rows — this may take a moment.");
+
+            foreach (var trunc in truncations)
+            {
+                // 4a. Truncation alone
+                var truncEnvelope = IsotopeCalculator.Compute(trunc.Formula);
+                entries.Add(new ProteoformEntry
+                {
+                    ModificationName = trunc.Name,
+                    CentroidMass = truncEnvelope.Centroid,
+                    Tolerance = tolerance,
+                    Envelope = truncEnvelope
+                });
+
+                // 4b. Truncation + each PTM family at each occupancy level
+                foreach (var family in ptmFamilies)
+                    foreach (var entry in MakePtmEntries(family, trunc.Formula, tolerance,
+                                                         prefix: trunc.Name))
+                        entries.Add(entry);
+            }
+        }
+
+        return entries;
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────────────
+
+    private record PtmFamily(
+        string FamilyKey,
+        string BestName,
+        double Delta,
+        int SiteCount);
+
+    /// <summary>
+    /// Collapses all PTM annotations into per-family groups, deduplicating
+    /// sites that appear in multiple databases.
+    /// </summary>
+    private static List<PtmFamily> BuildFamilyGroups(List<PtmAnnotation> allPtms)
+    {
+        return allPtms
+            // Deduplicate: same family + same position → keep best delta/name
             .GroupBy(p => (ModFamily(p.ModificationName), p.Position))
             .Select(g =>
             {
@@ -37,74 +89,50 @@ public static class ProteoformBuilder
                                          .First().ModificationName;
                 return best;
             })
-            // Then group by family to get all sites for each mod type
+            // Group by family → one PtmFamily per type
             .GroupBy(p => ModFamily(p.ModificationName))
+            .Select(g =>
+            {
+                double delta = g.Where(p => p.MassDelta != 0)
+                                 .OrderByDescending(p => Math.Abs(p.MassDelta))
+                                 .Select(p => p.MassDelta)
+                                 .FirstOrDefault();
+                string name = g.OrderByDescending(p => p.ModificationName.Length)
+                                .First().ModificationName;
+                return new PtmFamily(g.Key, name, delta, g.Count());
+            })
             .ToList();
-
-        foreach (var familyGroup in byFamily)
-        {
-            var sites = familyGroup.ToList();
-            int siteCount = sites.Count;
-
-            // Representative delta and display name for this family
-            double delta = sites
-                .Where(p => p.MassDelta != 0)
-                .OrderByDescending(p => Math.Abs(p.MassDelta))
-                .Select(p => p.MassDelta)
-                .FirstOrDefault();
-
-            string baseName = sites
-                .OrderByDescending(p => p.ModificationName.Length)
-                .First().ModificationName;
-
-            // Generate one proteoform per occupancy level (×1 through ×N)
-            for (int k = 1; k <= siteCount; k++)
-            {
-                double totalDelta = delta * k;
-                var envelope = IsotopeCalculator.ComputeFromDelta(intactFormula, totalDelta);
-
-                entries.Add(new ProteoformEntry
-                {
-                    ModificationName = FormatMultiplicity(baseName, familyGroup.Key, k, siteCount),
-                    CentroidMass = envelope.Centroid,
-                    Tolerance = tolerance,
-                    Envelope = envelope
-                });
-            }
-        }
-
-        // ── 3. Truncations ────────────────────────────────────────────────
-        if (includeTruncations && sequence.Length > 1)
-        {
-            var truncations = TruncationGenerator.Generate(sequence);
-            foreach (var trunc in truncations)
-            {
-                var envelope = IsotopeCalculator.ComputeFromDelta(intactFormula, trunc.MassDelta);
-                entries.Add(new ProteoformEntry
-                {
-                    ModificationName = trunc.ModificationName,
-                    CentroidMass = envelope.Centroid,
-                    Tolerance = tolerance,
-                    Envelope = envelope
-                });
-            }
-        }
-
-        return entries;
     }
 
     /// <summary>
-    /// Formats the modification name with a multiplicity prefix.
-    /// k=1 of 1 site  → original name unchanged
-    /// k=1 of N sites → "Mono-[family] (1 of N sites)"
-    /// k=2            → "Di-[family] (2 of N sites)"
-    /// k=3            → "Tri-[family] (3 of N sites)"
-    /// k≥4            → "4× [family] (4 of N sites)"
+    /// Generates mono/di/tri/... ProteoformEntry rows for one PTM family
+    /// applied to <paramref name="baseFormula"/>.
+    /// If <paramref name="prefix"/> is provided, the name becomes
+    /// "[prefix] + [multiplicity name]".
     /// </summary>
+    private static IEnumerable<ProteoformEntry> MakePtmEntries(
+        PtmFamily family,
+        MolecularFormula baseFormula,
+        double tolerance,
+        string? prefix = null)
+    {
+        for (int k = 1; k <= family.SiteCount; k++)
+        {
+            var envelope = IsotopeCalculator.ComputeFromDelta(baseFormula, family.Delta * k);
+            string modName = FormatMultiplicity(family.BestName, family.FamilyKey, k, family.SiteCount);
+            yield return new ProteoformEntry
+            {
+                ModificationName = prefix is null ? modName : $"{prefix} + {modName}",
+                CentroidMass = envelope.Centroid,
+                Tolerance = tolerance,
+                Envelope = envelope
+            };
+        }
+    }
+
     private static string FormatMultiplicity(string baseName, string family, int k, int total)
     {
-        if (total == 1) return baseName;  // only one site — no multiplicity prefix needed
-
+        if (total == 1) return baseName;
         string prefix = k switch
         {
             1 => "Mono",
@@ -115,21 +143,14 @@ public static class ProteoformBuilder
             6 => "Hexa",
             _ => $"{k}×"
         };
-
-        // Capitalise family for display
         string display = char.ToUpper(family[0]) + family[1..];
         return $"{prefix}-{display} ({k} of {total} sites)";
     }
 
-    /// <summary>
-    /// Maps any modification name to a canonical family string used for grouping.
-    /// </summary>
     public static string ModFamily(string name)
     {
         string n = name.ToLowerInvariant();
         if (n.Contains("phospho"))                                              return "phosphorylation";
-        if (n.Contains("trimethyl") || (n.Contains("methyl") && n.Contains("tri"))) return "methylation";
-        if (n.Contains("dimethyl")  || (n.Contains("methyl") && n.Contains("di")))  return "methylation";
         if (n.Contains("methyl"))                                               return "methylation";
         if (n.Contains("acetyl"))                                               return "acetylation";
         if (n.Contains("ubiquitin") || n.Contains("glygly") || n.Contains("gg-"))   return "ubiquitination";

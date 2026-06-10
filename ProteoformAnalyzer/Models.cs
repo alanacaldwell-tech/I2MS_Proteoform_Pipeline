@@ -24,13 +24,10 @@ public class MolecularFormula
 public class PtmAnnotation
 {
     public string ModificationName { get; set; } = "";
-    public int Position { get; set; }           // 1-based sequence position; 0 = whole-protein (truncation)
-    public char? Residue { get; set; }           // amino acid at that position
-    public double MassDelta { get; set; }        // mass shift in Da
-    public string Source { get; set; } = "";     // UniProt | PRIDE | PTMeXchange | Custom
-    public bool IsNTerminalTruncation { get; set; }
-    public bool IsCTerminalTruncation { get; set; }
-    public int TruncationLength { get; set; }    // number of residues removed
+    public int Position { get; set; }
+    public char? Residue { get; set; }
+    public double MassDelta { get; set; }
+    public string Source { get; set; } = "";
 }
 
 /// <summary>One row in the output CSV.</summary>
