@@ -14,11 +14,16 @@ public static class SpectrumAnalyzer
     // Minimum number of ions in the apex bin to be considered a real peak (filters single-ion noise).
     private const long MinApexHeight = 2;
 
+    // A bin qualifies as a peak apex only if it is the tallest bin within ±NeighbourhoodRadius bins.
+    // Radius of 5 (10-Da window) is wider than any single 1-Da isotope spacing but narrower than
+    // the typical inter-proteoform spacing, so one real isotope envelope produces exactly one peak.
+    private const int NeighbourhoodRadius = 5;
+
     public static List<(ProteoformEntry Entry, double ExperimentalCentroid, long IonCount)>
         ProcessFile(
             string dmtPath,
             List<ProteoformEntry> database,
-            double matchWindow = 0.5,
+            double matchWindow = 2.0,
             double ionCountingWindow = 5.0)
     {
         // ── Step 1: read all masses ───────────────────────────────────────
@@ -63,12 +68,20 @@ public static class SpectrumAnalyzer
             // Require a minimum apex height to suppress single-ion noise bins
             if (height < MinApexHeight) continue;
 
-            // Local maximum: strictly greater than both immediate neighbours
-            histogram.TryGetValue(b - 1, out long left);
-            histogram.TryGetValue(b + 1, out long right);
-            if (height <= left || height <= right) continue;
+            // Neighbourhood-based local maximum: apex must be the tallest bin in [b-N, b+N].
+            // This prevents every noisy bump within an isotope envelope from being called a peak.
+            bool isApex = true;
+            for (int d = -NeighbourhoodRadius; d <= NeighbourhoodRadius; d++)
+            {
+                if (d == 0) continue;
+                histogram.TryGetValue(b + d, out long nb);
+                if (nb >= height) { isApex = false; break; }
+            }
+            if (!isApex) continue;
 
-            long halfMax = Math.Max(1, height / 2);
+            // Ceiling division prevents half-max from being under-estimated for small apex heights,
+            // which would otherwise extend the FWHM scan through empty bins in sparse data.
+            long halfMax = Math.Max(1L, (height + 1) / 2);
 
             // Scan left for FWHM edge
             int leftBin = b;
