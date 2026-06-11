@@ -26,7 +26,7 @@ public static class CsvBatchMode
         string inputCsvPath,
         HttpClient http,
         bool includeTruncations,
-        double matchWindow = 0.5,
+        double matchWindow = 2.0,
         double ionCountingWindow = 5.0,
         string? dmtFolder = null)
     {

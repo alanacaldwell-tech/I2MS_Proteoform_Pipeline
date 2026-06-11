@@ -35,8 +35,8 @@ if (modeInput == "2")
     Console.Write("Include N- and C-terminal truncations? (y/n, default y): ");
     bool batchTrunc = (Console.ReadLine()?.Trim().ToLower() ?? "y") != "n";
 
-    double batchMatchTol = 0.5;
-    Console.Write("Match tolerance in Da — max distance from peak centroid to database mass (default 0.5): ");
+    double batchMatchTol = 2.0;
+    Console.Write("Match tolerance in Da — max distance from peak centroid to database mass (default 2.0): ");
     string? batchMatchTolStr = Console.ReadLine()?.Trim();
     if (!string.IsNullOrEmpty(batchMatchTolStr) &&
         double.TryParse(batchMatchTolStr, System.Globalization.NumberStyles.Any,
@@ -196,7 +196,7 @@ Console.WriteLine();
 Console.Write("Path to folder containing .dmt files (press Enter to skip): ");
 string? dmtFolder = Console.ReadLine()?.Trim().Trim('"');
 
-double matchTol = 0.5;
+double matchTol = 2.0;
 double ionWindow = 5.0;
 List<string> dmtFileNames = new();
 List<AnalysisResult> analysisResults = new();
@@ -209,7 +209,7 @@ if (!string.IsNullOrEmpty(dmtFolder))
     }
     else
     {
-        Console.Write("Match tolerance in Da — max distance from peak centroid to database mass (default 0.5): ");
+        Console.Write("Match tolerance in Da — max distance from peak centroid to database mass (default 2.0): ");
         string? matchTolStr = Console.ReadLine()?.Trim();
         if (!string.IsNullOrEmpty(matchTolStr) &&
             double.TryParse(matchTolStr, System.Globalization.NumberStyles.Any,
