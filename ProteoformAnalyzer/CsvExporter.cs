@@ -32,7 +32,7 @@ public static class CsvExporter
         using var w = new StreamWriter(path);
 
         // Header
-        var header = "Modification Name,Predicted Centroid Mass (Da),Experimental Centroid (Da)";
+        var header = "Modification Name,Predicted Centroid Mass (Da),Experimental Peak Centroid (Da)";
         foreach (var fn in fileNames)
             header += $",{Csv(fn)} Ion Count";
         w.WriteLine(header);
@@ -41,7 +41,7 @@ public static class CsvExporter
         {
             string name  = Csv(r.DatabaseEntry.ModificationName);
             string pred  = r.DatabaseEntry.CentroidMass.ToString("F4");
-            string expt  = r.MeanExperimentalCentroid.ToString("F4");
+            string expt  = r.ExperimentalCentroid.ToString("F4");
             string row   = $"{name},{pred},{expt}";
 
             foreach (var fn in fileNames)

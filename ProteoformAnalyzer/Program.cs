@@ -35,13 +35,21 @@ if (modeInput == "2")
     Console.Write("Include N- and C-terminal truncations? (y/n, default y): ");
     bool batchTrunc = (Console.ReadLine()?.Trim().ToLower() ?? "y") != "n";
 
-    double batchTol = 5.0;
-    Console.Write("Mass tolerance in Da (default 5.0): ");
-    string? batchTolStr = Console.ReadLine()?.Trim();
-    if (!string.IsNullOrEmpty(batchTolStr) &&
-        double.TryParse(batchTolStr, System.Globalization.NumberStyles.Any,
-            System.Globalization.CultureInfo.InvariantCulture, out double bt) && bt > 0)
-        batchTol = bt;
+    double batchMatchTol = 0.5;
+    Console.Write("Match tolerance in Da — max distance from peak centroid to database mass (default 0.5): ");
+    string? batchMatchTolStr = Console.ReadLine()?.Trim();
+    if (!string.IsNullOrEmpty(batchMatchTolStr) &&
+        double.TryParse(batchMatchTolStr, System.Globalization.NumberStyles.Any,
+            System.Globalization.CultureInfo.InvariantCulture, out double bmt) && bmt > 0)
+        batchMatchTol = bmt;
+
+    double batchIonWindow = 5.0;
+    Console.Write("Ion-counting window in Da — signal summed within ±window of database mass (default 5.0): ");
+    string? batchIonWinStr = Console.ReadLine()?.Trim();
+    if (!string.IsNullOrEmpty(batchIonWinStr) &&
+        double.TryParse(batchIonWinStr, System.Globalization.NumberStyles.Any,
+            System.Globalization.CultureInfo.InvariantCulture, out double biw) && biw > 0)
+        batchIonWindow = biw;
 
     Console.Write("Path to folder containing .dmt files (press Enter to skip): ");
     string? batchDmtFolder = Console.ReadLine()?.Trim().Trim('"');
@@ -52,7 +60,7 @@ if (modeInput == "2")
     }
 
     Console.WriteLine();
-    await CsvBatchMode.RunAsync(batchCsvPath, http, batchTrunc, batchTol, batchDmtFolder);
+    await CsvBatchMode.RunAsync(batchCsvPath, http, batchTrunc, batchMatchTol, batchIonWindow, batchDmtFolder);
     return;
 }
 
@@ -188,7 +196,8 @@ Console.WriteLine();
 Console.Write("Path to folder containing .dmt files (press Enter to skip): ");
 string? dmtFolder = Console.ReadLine()?.Trim().Trim('"');
 
-double defaultTol = 5.0;
+double matchTol = 0.5;
+double ionWindow = 5.0;
 List<string> dmtFileNames = new();
 List<AnalysisResult> analysisResults = new();
 
@@ -200,12 +209,19 @@ if (!string.IsNullOrEmpty(dmtFolder))
     }
     else
     {
-        Console.Write("Ion-counting tolerance in Da (default 5.0, shrinks automatically between nearby peaks): ");
-        string? tolStr = Console.ReadLine()?.Trim();
-        if (!string.IsNullOrEmpty(tolStr) &&
-            double.TryParse(tolStr, System.Globalization.NumberStyles.Any,
-                System.Globalization.CultureInfo.InvariantCulture, out double pt) && pt > 0)
-            defaultTol = pt;
+        Console.Write("Match tolerance in Da — max distance from peak centroid to database mass (default 0.5): ");
+        string? matchTolStr = Console.ReadLine()?.Trim();
+        if (!string.IsNullOrEmpty(matchTolStr) &&
+            double.TryParse(matchTolStr, System.Globalization.NumberStyles.Any,
+                System.Globalization.CultureInfo.InvariantCulture, out double mt) && mt > 0)
+            matchTol = mt;
+
+        Console.Write("Ion-counting window in Da — signal summed within ±window of database mass (default 5.0): ");
+        string? ionWinStr = Console.ReadLine()?.Trim();
+        if (!string.IsNullOrEmpty(ionWinStr) &&
+            double.TryParse(ionWinStr, System.Globalization.NumberStyles.Any,
+                System.Globalization.CultureInfo.InvariantCulture, out double iw) && iw > 0)
+            ionWindow = iw;
 
         var dmtFiles = Directory.GetFiles(dmtFolder, "*.dmt", SearchOption.TopDirectoryOnly)
                                 .OrderBy(f => f).ToArray();
@@ -219,8 +235,10 @@ if (!string.IsNullOrEmpty(dmtFolder))
             Console.WriteLine($"  Found {dmtFiles.Length} .dmt file(s).");
             Console.WriteLine();
 
-            // Accumulate results: key = (modName, predictedMass)
-            var resultMap = new Dictionary<(string, double), AnalysisResult>();
+            // Key = (modName, predictedMass, roundedExptCentroid) so that multiple peaks
+            // matching the same database entry appear as separate rows, while the same
+            // peak detected across multiple files is merged into one row.
+            var resultMap = new Dictionary<(string, double, long), AnalysisResult>();
 
             for (int f = 0; f < dmtFiles.Length; f++)
             {
@@ -229,20 +247,23 @@ if (!string.IsNullOrEmpty(dmtFolder))
 
                 try
                 {
-                    var matches = SpectrumAnalyzer.ProcessFile(dmtFiles[f], proteoforms, defaultTol);
+                    var matches = SpectrumAnalyzer.ProcessFile(dmtFiles[f], proteoforms, matchTol, ionWindow);
                     long totalIons = matches.Sum(m => m.IonCount);
                     Console.WriteLine($"{matches.Count} peak match(es), {totalIons:N0} ions");
 
                     foreach (var (entry, exptCentroid, ionCount) in matches)
                     {
-                        var key = (entry.ModificationName, entry.CentroidMass);
+                        long roundedCentroid = (long)Math.Round(exptCentroid);
+                        var key = (entry.ModificationName, entry.CentroidMass, roundedCentroid);
                         if (!resultMap.TryGetValue(key, out var ar))
                         {
-                            ar = new AnalysisResult { DatabaseEntry = entry };
+                            ar = new AnalysisResult
+                            {
+                                DatabaseEntry = entry,
+                                ExperimentalCentroid = exptCentroid
+                            };
                             resultMap[key] = ar;
                         }
-                        // Accumulate experimental centroid for later averaging
-                        ar.MeanExperimentalCentroid += exptCentroid;
                         ar.IonCountsPerFile[fileName] = ionCount;
                     }
                 }
@@ -252,24 +273,17 @@ if (!string.IsNullOrEmpty(dmtFolder))
                 }
             }
 
-            // Finalise mean experimental centroids
-            foreach (var ar in resultMap.Values)
-            {
-                int matchedFiles = ar.IonCountsPerFile.Count;
-                if (matchedFiles > 0)
-                    ar.MeanExperimentalCentroid /= matchedFiles;
-            }
-
-            // Fill zeros for files where a proteoform was not matched
+            // Fill zeros for files where a hit was not detected
             analysisResults = resultMap.Values
                 .OrderBy(r => r.DatabaseEntry.ModificationName)
+                .ThenBy(r => r.ExperimentalCentroid)
                 .ToList();
 
             foreach (var ar in analysisResults)
                 foreach (var fn in dmtFileNames)
                     ar.IonCountsPerFile.TryAdd(fn, 0);
 
-            Console.WriteLine($"\n  {analysisResults.Count} unique proteoform(s) matched across all files.");
+            Console.WriteLine($"\n  {analysisResults.Count} hit(s) matched across all files.");
         }
     }
 }
@@ -321,7 +335,7 @@ if (analysisResults.Count > 0)
         long total = r.IonCountsPerFile.Values.Sum();
         Console.WriteLine($"{r.DatabaseEntry.ModificationName,-50} " +
                           $"{r.DatabaseEntry.CentroidMass,14:F4}  " +
-                          $"{r.MeanExperimentalCentroid,15:F4}  {total,12:N0}");
+                          $"{r.ExperimentalCentroid,15:F4}  {total,12:N0}");
     }
     if (analysisResults.Count > 15)
         Console.WriteLine($"  ... and {analysisResults.Count - 15} more (see CSV).");

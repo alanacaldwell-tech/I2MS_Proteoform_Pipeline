@@ -15,23 +15,18 @@ public class SpectrumPeak
     public int LeftBin { get; set; }
     /// <summary>Rightmost 1-Da bin index included in this peak's FWHM window.</summary>
     public int RightBin { get; set; }
-    /// <summary>
-    /// Adaptive ion-counting tolerance (Da).
-    /// Defaults to the user-supplied value; shrinks to half the distance to the
-    /// nearest neighbouring peak when that distance is less than 2 × default.
-    /// </summary>
-    public double Tolerance { get; set; }
 }
 
 /// <summary>
-/// The result of matching one database proteoform to experimental peaks
-/// across one or more .dmt files.
+/// One hit: a single experimental peak matched to a database proteoform,
+/// with ion counts accumulated across .dmt files.
+/// Multiple hits to the same database entry are stored as separate instances.
 /// </summary>
 public class AnalysisResult
 {
     public ProteoformEntry DatabaseEntry { get; init; } = null!;
-    /// <summary>Mean experimental centroid across all files in which this proteoform was matched.</summary>
-    public double MeanExperimentalCentroid { get; set; }
-    /// <summary>filename → ion count (0 if the proteoform was not matched in that file).</summary>
+    /// <summary>Experimental FWHM centroid of the peak that matched this proteoform (Da).</summary>
+    public double ExperimentalCentroid { get; set; }
+    /// <summary>filename → ion count within ±ionCountingWindow of the database centroid (0 if not matched in that file).</summary>
     public Dictionary<string, long> IonCountsPerFile { get; set; } = new();
 }

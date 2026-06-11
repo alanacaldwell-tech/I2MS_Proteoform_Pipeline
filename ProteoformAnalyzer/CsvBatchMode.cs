@@ -26,7 +26,8 @@ public static class CsvBatchMode
         string inputCsvPath,
         HttpClient http,
         bool includeTruncations,
-        double defaultTolerance = 5.0,
+        double matchWindow = 0.5,
+        double ionCountingWindow = 5.0,
         string? dmtFolder = null)
     {
         // ── Parse input CSV ───────────────────────────────────────────────
@@ -79,7 +80,7 @@ public static class CsvBatchMode
 
                 // Build database and run spectrum analysis
                 var proteoforms = ProteoformBuilder.Build(sequence, allPtms, includeTruncations, tolerance: 5.0);
-                var (results, fileNames) = AnalyzeIfProvided(proteoforms, dmtFolder, defaultTolerance);
+                var (results, fileNames) = AnalyzeIfProvided(proteoforms, dmtFolder, matchWindow, ionCountingWindow);
                 string outPath = ResolveOutputPath(proteinInput, customOutputPath, inputDir);
                 ExportSafe(proteoforms, results, fileNames, outPath);
                 success++;
@@ -90,7 +91,7 @@ public static class CsvBatchMode
                 Console.WriteLine($"  Treating as raw sequence ({sequence.Length} aa). No database query.");
 
                 var proteoforms = ProteoformBuilder.Build(sequence, new List<PtmAnnotation>(), includeTruncations, tolerance: 5.0);
-                var (results, fileNames) = AnalyzeIfProvided(proteoforms, dmtFolder, defaultTolerance);
+                var (results, fileNames) = AnalyzeIfProvided(proteoforms, dmtFolder, matchWindow, ionCountingWindow);
                 string outPath = ResolveOutputPath($"sequence_{i + 1}", customOutputPath, inputDir);
                 ExportSafe(proteoforms, results, fileNames, outPath);
                 success++;
@@ -173,7 +174,11 @@ public static class CsvBatchMode
     }
 
     private static (List<AnalysisResult> results, List<string> fileNames)
-        AnalyzeIfProvided(List<ProteoformEntry> proteoforms, string? dmtFolder, double defaultTol)
+        AnalyzeIfProvided(
+            List<ProteoformEntry> proteoforms,
+            string? dmtFolder,
+            double matchWindow,
+            double ionCountingWindow)
     {
         var emptyFileNames = new List<string>();
         if (string.IsNullOrEmpty(dmtFolder) || !Directory.Exists(dmtFolder))
@@ -185,22 +190,25 @@ public static class CsvBatchMode
             return (new List<AnalysisResult>(), emptyFileNames);
 
         var fileNames = dmtFiles.Select(Path.GetFileName).ToList()!;
-        var resultMap = new Dictionary<(string, double), AnalysisResult>();
+
+        // Key includes rounded experimental centroid so multiple peaks matching the
+        // same database entry are listed as separate rows.
+        var resultMap = new Dictionary<(string, double, long), AnalysisResult>();
 
         foreach (var (filePath, fileName) in dmtFiles.Zip(fileNames))
         {
             try
             {
-                var matches = SpectrumAnalyzer.ProcessFile(filePath, proteoforms, defaultTol);
+                var matches = SpectrumAnalyzer.ProcessFile(filePath, proteoforms, matchWindow, ionCountingWindow);
                 foreach (var (entry, centroid, count) in matches)
                 {
-                    var key = (entry.ModificationName, entry.CentroidMass);
+                    long roundedCentroid = (long)Math.Round(centroid);
+                    var key = (entry.ModificationName, entry.CentroidMass, roundedCentroid);
                     if (!resultMap.TryGetValue(key, out var ar))
                     {
-                        ar = new AnalysisResult { DatabaseEntry = entry };
+                        ar = new AnalysisResult { DatabaseEntry = entry, ExperimentalCentroid = centroid };
                         resultMap[key] = ar;
                     }
-                    ar.MeanExperimentalCentroid += centroid;
                     ar.IonCountsPerFile[fileName] = count;
                 }
             }
@@ -210,15 +218,14 @@ public static class CsvBatchMode
             }
         }
 
-        var results = resultMap.Values.ToList();
+        var results = resultMap.Values
+            .OrderBy(r => r.DatabaseEntry.ModificationName)
+            .ThenBy(r => r.ExperimentalCentroid)
+            .ToList();
         foreach (var ar in results)
-        {
-            int n = ar.IonCountsPerFile.Count;
-            if (n > 0) ar.MeanExperimentalCentroid /= n;
             foreach (var fn in fileNames) ar.IonCountsPerFile.TryAdd(fn, 0);
-        }
 
-        Console.WriteLine($"  {results.Count} proteoform(s) matched across {fileNames.Count} file(s).");
+        Console.WriteLine($"  {results.Count} hit(s) matched across {fileNames.Count} file(s).");
         return (results, fileNames);
     }
 
