@@ -74,14 +74,26 @@ public static class ProteoformBuilder
                     Envelope = truncEnvelope
                 });
 
+                // Only PTMs annotated at positions that still exist in the truncated
+                // sequence can occur. N-terminal truncations remove positions 1..i;
+                // C-terminal truncations remove the last i positions.
+                var survivingPtms = trunc.IsNTerminal
+                    ? allPtms.Where(p => p.Position > trunc.ResiduesToRemove).ToList()
+                    : allPtms.Where(p => p.Position <= sequence.Length - trunc.ResiduesToRemove).ToList();
+
+                if (survivingPtms.Count == 0)
+                    continue;
+
+                var truncFamilies = BuildFamilyGroups(survivingPtms);
+
                 // 5b. Truncation + each single PTM family at each occupancy level
-                foreach (var family in ptmFamilies)
+                foreach (var family in truncFamilies)
                     foreach (var entry in MakeSingleFamilyEntries(
                         family, trunc.Formula, tolerance, prefix: trunc.Name))
                         entries.Add(entry);
 
                 // 5c. Truncation + cross-family PTM combinations
-                foreach (var combo in CrossFamilyCombinations(ptmFamilies, MaxCombinationDepth))
+                foreach (var combo in CrossFamilyCombinations(truncFamilies, MaxCombinationDepth))
                 {
                     double totalDelta = combo.Sum(kv => kv.Family.Delta * kv.Occupancy);
                     var envelope = IsotopeCalculator.ComputeFromDelta(trunc.Formula, totalDelta);
