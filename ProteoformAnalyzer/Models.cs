@@ -33,7 +33,14 @@ public class PtmAnnotation
 /// <summary>One entry in the proteoform database (predicted proteoform).</summary>
 public class ProteoformEntry
 {
+    /// <summary>UniProt accession or short label identifying the source protein.</summary>
+    public string ProteinLabel { get; set; } = "";
     public string ModificationName { get; set; } = "";
+    /// <summary>
+    /// Human-friendly alias: truncations rendered as residue ranges (e.g. "6-140"),
+    /// "(X of Y sites)" removed from PTM names.
+    /// </summary>
+    public string AlternativeName { get; set; } = "";
     public double CentroidMass { get; set; }       // predicted centroid (Da)
     public double Tolerance { get; set; } = 5.0;   // kept for ProteoformBuilder; overridden by adaptive value at match time
     public IsotopeEnvelope? Envelope { get; set; }

@@ -202,7 +202,8 @@ bool includeTrunc = (Console.ReadLine()?.Trim().ToLower() ?? "y") != "n";
 // ── 6. Build proteoform database ──────────────────────────────────────────
 Console.WriteLine();
 Console.WriteLine($"Building proteoform database (truncations: {includeTrunc})...");
-var proteoforms = ProteoformBuilder.Build(sequence, allPtms, includeTrunc, tolerance: 5.0);
+var proteoforms = ProteoformBuilder.Build(sequence, allPtms, includeTrunc, tolerance: 5.0,
+                                         proteinLabel: uniprotId ?? "Target");
 Console.WriteLine($"Generated {proteoforms.Count} database entries.");
 
 // ── 6b. Contaminant proteins ──────────────────────────────────────────────
@@ -213,11 +214,6 @@ Console.WriteLine();
 Console.Write("Check for contaminating proteins? (y/n, default n): ");
 if ((Console.ReadLine()?.Trim().ToLower() ?? "n") == "y")
 {
-    // Prefix every target entry so the protein of origin is visible in the CSV
-    string targetLabel = uniprotId ?? "Target";
-    foreach (var e in proteoforms)
-        e.ModificationName = $"[{targetLabel}] {e.ModificationName}";
-
     var contUniProtClient = new UniProtClient(http);
     var contPrideClient   = new PrideClient(http);
     var contPtmExClient   = new PtmExchangeClient(http);
@@ -236,9 +232,8 @@ if ((Console.ReadLine()?.Trim().ToLower() ?? "n") == "y")
         var contPtmExPtms  = await contPtmExClient.FetchAsync(contId, contSeq);
         var contAllPtms    = contUniProtPtms.Concat(contPridePtms).Concat(contPtmExPtms).ToList();
 
-        var contEntries = ProteoformBuilder.Build(contSeq, contAllPtms, includeTrunc, tolerance: 5.0);
-        foreach (var e in contEntries)
-            e.ModificationName = $"[{contId}] {e.ModificationName}";
+        var contEntries = ProteoformBuilder.Build(contSeq, contAllPtms, includeTrunc, tolerance: 5.0,
+                                                   proteinLabel: contId);
         proteoforms.AddRange(contEntries);
         Console.WriteLine($"done — {contEntries.Count} entries added ({contAllPtms.Count} PTM annotations).");
     }

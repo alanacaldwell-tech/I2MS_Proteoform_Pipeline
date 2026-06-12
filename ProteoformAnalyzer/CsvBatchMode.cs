@@ -61,8 +61,8 @@ public static class CsvBatchMode
                     .Concat(await cPride.FetchAsync(cId, cSeq))
                     .Concat(await cPtmEx.FetchAsync(cId, cSeq))
                     .ToList();
-                var cEntries = ProteoformBuilder.Build(cSeq, cPtms, includeTruncations, tolerance: 5.0);
-                foreach (var e in cEntries) e.ModificationName = $"[{cId}] {e.ModificationName}";
+                var cEntries = ProteoformBuilder.Build(cSeq, cPtms, includeTruncations, tolerance: 5.0,
+                                                       proteinLabel: cId);
                 contaminantEntries.AddRange(cEntries);
                 Console.WriteLine($"done ({cEntries.Count} entries).");
             }
@@ -108,8 +108,9 @@ public static class CsvBatchMode
                 allPtms.AddRange(await ptmExClient.FetchAsync(uniprotId, sequence));
 
                 // Build database and run spectrum analysis
-                var proteoforms = ProteoformBuilder.Build(sequence, allPtms, includeTruncations, tolerance: 5.0);
-                var combinedDb  = MergeWithContaminants(proteoforms, uniprotId, contaminantEntries);
+                var proteoforms = ProteoformBuilder.Build(sequence, allPtms, includeTruncations, tolerance: 5.0,
+                                                          proteinLabel: uniprotId);
+                var combinedDb  = MergeWithContaminants(proteoforms, contaminantEntries);
                 var (results, fileNames) = AnalyzeIfProvided(combinedDb, dmtFolder, matchWindow, ionCountingWindow);
                 string outPath = ResolveOutputPath(proteinInput, customOutputPath, inputDir);
                 ExportSafe(combinedDb, results, fileNames, outPath);
@@ -120,8 +121,9 @@ public static class CsvBatchMode
                 sequence = proteinInput.ToUpper();
                 Console.WriteLine($"  Treating as raw sequence ({sequence.Length} aa). No database query.");
 
-                var proteoforms = ProteoformBuilder.Build(sequence, new List<PtmAnnotation>(), includeTruncations, tolerance: 5.0);
-                var combinedDb  = MergeWithContaminants(proteoforms, $"sequence_{i + 1}", contaminantEntries);
+                var proteoforms = ProteoformBuilder.Build(sequence, new List<PtmAnnotation>(), includeTruncations,
+                                                          tolerance: 5.0, proteinLabel: $"sequence_{i + 1}");
+                var combinedDb  = MergeWithContaminants(proteoforms, contaminantEntries);
                 var (results, fileNames) = AnalyzeIfProvided(combinedDb, dmtFolder, matchWindow, ionCountingWindow);
                 string outPath = ResolveOutputPath($"sequence_{i + 1}", customOutputPath, inputDir);
                 ExportSafe(combinedDb, results, fileNames, outPath);
@@ -141,18 +143,11 @@ public static class CsvBatchMode
 
     // ── Database merging ──────────────────────────────────────────────────
 
-    // If contaminants are present, prefix target entries so every row in the
-    // output CSV clearly identifies which protein it belongs to.
     private static List<ProteoformEntry> MergeWithContaminants(
         List<ProteoformEntry> targetEntries,
-        string targetLabel,
         List<ProteoformEntry> contaminantEntries)
     {
         if (contaminantEntries.Count == 0) return targetEntries;
-
-        foreach (var e in targetEntries)
-            e.ModificationName = $"[{targetLabel}] {e.ModificationName}";
-
         var combined = new List<ProteoformEntry>(targetEntries);
         combined.AddRange(contaminantEntries);
         return combined;

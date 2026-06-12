@@ -11,7 +11,8 @@ public static class ProteoformBuilder
         string sequence,
         List<PtmAnnotation> allPtms,
         bool includeTruncations,
-        double tolerance)
+        double tolerance,
+        string proteinLabel = "")
     {
         var entries = new List<ProteoformEntry>();
         var intactFormula = AminoAcidData.GetFormula(sequence);
@@ -108,7 +109,42 @@ public static class ProteoformBuilder
             }
         }
 
+        // Post-processing: set ProteinLabel and compute AlternativeName for every entry
+        foreach (var e in entries)
+        {
+            e.ProteinLabel = proteinLabel;
+            e.AlternativeName = ComputeAlternativeName(e.ModificationName, sequence.Length);
+        }
         return entries;
+    }
+
+    // ── Alternative name generator ────────────────────────────────────────
+
+    /// <summary>
+    /// Derives a user-friendly alternative name:
+    ///   • Truncations → residue range, e.g. "6-140" or "1-135"
+    ///   • PTMs        → strips redundant "(X of Y sites)" suffix
+    ///   • Combinations of the above are handled component-by-component
+    /// </summary>
+    private static string ComputeAlternativeName(string modName, int seqLen)
+    {
+        // Remove "(X of Y sites)" from any PTM component
+        string alt = System.Text.RegularExpressions.Regex.Replace(
+            modName, @"\s*\(\d+ of \d+ sites?\)", "");
+
+        // N-terminal truncation (-i residues) → "{i+1}-{seqLen}"
+        alt = System.Text.RegularExpressions.Regex.Replace(
+            alt,
+            @"N-terminal truncation \(-(\d+) residues?\)",
+            m => $"{int.Parse(m.Groups[1].Value) + 1}-{seqLen}");
+
+        // C-terminal truncation (-i residues) → "1-{seqLen-i}"
+        alt = System.Text.RegularExpressions.Regex.Replace(
+            alt,
+            @"C-terminal truncation \(-(\d+) residues?\)",
+            m => $"1-{seqLen - int.Parse(m.Groups[1].Value)}");
+
+        return alt.Trim();
     }
 
     // ── Cross-family combination generator ───────────────────────────────

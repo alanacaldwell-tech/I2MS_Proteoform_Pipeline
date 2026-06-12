@@ -9,12 +9,12 @@ public static class CsvExporter
     public static void ExportDatabase(List<ProteoformEntry> entries, string path)
     {
         using var w = new StreamWriter(path);
-        w.WriteLine("Modification Name,Predicted Centroid Mass (Da),Tolerance Range,Envelope Sigma (Da)");
+        w.WriteLine("Protein,Modification Name,Alternative Name,Predicted Centroid Mass (Da),Tolerance Range,Envelope Sigma (Da)");
 
         foreach (var e in entries)
         {
-            w.WriteLine($"{Csv(e.ModificationName)},{e.CentroidMass:F4}," +
-                        $"+/- {e.Tolerance:F1} Da," +
+            w.WriteLine($"{Csv(e.ProteinLabel)},{Csv(e.ModificationName)},{Csv(e.AlternativeName)}," +
+                        $"{e.CentroidMass:F4},+/- {e.Tolerance:F1} Da," +
                         $"{(e.Envelope is not null ? e.Envelope.Sigma.ToString("F3") : "")}");
         }
     }
@@ -32,17 +32,19 @@ public static class CsvExporter
         using var w = new StreamWriter(path);
 
         // Header
-        var header = "Modification Name,Predicted Centroid Mass (Da),Experimental Peak Centroid (Da)";
+        var header = "Protein,Modification Name,Alternative Name,Predicted Centroid Mass (Da),Experimental Peak Centroid (Da)";
         foreach (var fn in fileNames)
             header += $",{Csv(fn)} Ion Count";
         w.WriteLine(header);
 
         foreach (var r in results)
         {
-            string name  = Csv(r.DatabaseEntry.ModificationName);
-            string pred  = r.DatabaseEntry.CentroidMass.ToString("F4");
-            string expt  = r.ExperimentalCentroid.ToString("F4");
-            string row   = $"{name},{pred},{expt}";
+            string protein = Csv(r.DatabaseEntry.ProteinLabel);
+            string name    = Csv(r.DatabaseEntry.ModificationName);
+            string altName = Csv(r.DatabaseEntry.AlternativeName);
+            string pred    = r.DatabaseEntry.CentroidMass.ToString("F4");
+            string expt    = r.ExperimentalCentroid.ToString("F4");
+            string row     = $"{protein},{name},{altName},{pred},{expt}";
 
             foreach (var fn in fileNames)
             {
