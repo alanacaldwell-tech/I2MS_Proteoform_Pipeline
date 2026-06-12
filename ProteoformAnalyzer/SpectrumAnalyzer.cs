@@ -112,18 +112,21 @@ public static class SpectrumAnalyzer
             // which would otherwise extend the FWHM scan through empty bins in sparse data.
             long halfMax = Math.Max(1L, (height + 1) / 2);
 
-            // Scan left for FWHM edge
+            // Scan left for FWHM edge — bounded to NeighbourhoodRadius bins from the apex.
+            // Bounding the scan prevents this peak's centroid window from extending into a
+            // neighbouring peak's territory, which would pull the centroid off-centre and
+            // cause the deduplication step to incorrectly merge two distinct proteoforms.
             int leftBin = b;
-            for (int i = b - 1; i >= minBin; i--)
+            for (int i = b - 1; i >= Math.Max(minBin, b - NeighbourhoodRadius); i--)
             {
                 histogram.TryGetValue(i, out long cnt);
                 if (cnt < halfMax) break;
                 leftBin = i;
             }
 
-            // Scan right for FWHM edge
+            // Scan right for FWHM edge — same bound
             int rightBin = b;
-            for (int i = b + 1; i <= maxBin; i++)
+            for (int i = b + 1; i <= Math.Min(maxBin, b + NeighbourhoodRadius); i++)
             {
                 histogram.TryGetValue(i, out long cnt);
                 if (cnt < halfMax) break;
