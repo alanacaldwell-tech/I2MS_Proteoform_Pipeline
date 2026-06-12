@@ -44,6 +44,14 @@ public static class SpectrumAnalyzer
         if (peaks.Count == 0)
             return new();
 
+        // ── Step 4b: centroid-space deduplication ─────────────────────────
+        // The neighbourhood check operates in bin-space, but the FWHM centroid
+        // can be far from the apex bin.  Two apex bins >5 apart can still yield
+        // centroids within a few Da of each other, making them look like isotope
+        // peaks of the same envelope.  Deduplicate by keeping only the tallest
+        // peak within any ionCountingWindow-wide centroid window.
+        peaks = DeduplicatePeaks(peaks, ionCountingWindow);
+
         // ── Step 5 + 6: match to database and count ions ──────────────────
         var results = MatchAndCount(peaks, masses, database, matchWindow, ionCountingWindow);
 
@@ -150,6 +158,21 @@ public static class SpectrumAnalyzer
         }
 
         return peaks;
+    }
+
+    // Sort tallest-first, then keep a peak only if its centroid is at least
+    // minSeparation Da from every already-accepted peak.  This removes isotope
+    // sub-peaks whose apex bins were >NeighbourhoodRadius apart in bin-space
+    // but whose FWHM centroids ended up close together.
+    private static List<SpectrumPeak> DeduplicatePeaks(
+        List<SpectrumPeak> peaks, double minSeparation)
+    {
+        var sorted = peaks.OrderByDescending(p => p.Height).ToList();
+        var kept   = new List<SpectrumPeak>();
+        foreach (var p in sorted)
+            if (kept.All(k => Math.Abs(k.Centroid - p.Centroid) >= minSeparation))
+                kept.Add(p);
+        return kept;
     }
 
     private static List<(ProteoformEntry, double, long)> MatchAndCount(
