@@ -59,8 +59,22 @@ if (modeInput == "2")
         batchDmtFolder = null;
     }
 
+    Console.Write("Check for contaminating proteins? (y/n, default n): ");
+    List<string>? batchContaminants = null;
+    if ((Console.ReadLine()?.Trim().ToLower() ?? "n") == "y")
+    {
+        batchContaminants = new List<string>();
+        while (true)
+        {
+            Console.Write("  Contaminant UniProt accession (press Enter to finish): ");
+            string? cId = Console.ReadLine()?.Trim().ToUpper();
+            if (string.IsNullOrEmpty(cId)) break;
+            batchContaminants.Add(cId);
+        }
+    }
+
     Console.WriteLine();
-    await CsvBatchMode.RunAsync(batchCsvPath, http, batchTrunc, batchMatchTol, batchIonWindow, batchDmtFolder);
+    await CsvBatchMode.RunAsync(batchCsvPath, http, batchTrunc, batchMatchTol, batchIonWindow, batchDmtFolder, batchContaminants);
     return;
 }
 
@@ -190,6 +204,45 @@ Console.WriteLine();
 Console.WriteLine($"Building proteoform database (truncations: {includeTrunc})...");
 var proteoforms = ProteoformBuilder.Build(sequence, allPtms, includeTrunc, tolerance: 5.0);
 Console.WriteLine($"Generated {proteoforms.Count} database entries.");
+
+// ── 6b. Contaminant proteins ──────────────────────────────────────────────
+// If the user wants to check for contaminating proteins, fetch their databases
+// and merge them into the main list.  Target entries are labelled so results
+// from each protein are distinguishable in the output.
+Console.WriteLine();
+Console.Write("Check for contaminating proteins? (y/n, default n): ");
+if ((Console.ReadLine()?.Trim().ToLower() ?? "n") == "y")
+{
+    // Prefix every target entry so the protein of origin is visible in the CSV
+    string targetLabel = uniprotId ?? "Target";
+    foreach (var e in proteoforms)
+        e.ModificationName = $"[{targetLabel}] {e.ModificationName}";
+
+    var contUniProtClient = new UniProtClient(http);
+    var contPrideClient   = new PrideClient(http);
+    var contPtmExClient   = new PtmExchangeClient(http);
+
+    while (true)
+    {
+        Console.Write("  Contaminant UniProt accession (press Enter to finish): ");
+        string? contId = Console.ReadLine()?.Trim().ToUpper();
+        if (string.IsNullOrEmpty(contId)) break;
+
+        Console.Write($"  Fetching {contId} ... ");
+        var (contSeq, contUniProtPtms) = await contUniProtClient.FetchAsync(contId);
+        if (string.IsNullOrEmpty(contSeq)) { Console.WriteLine("not found — skipping."); continue; }
+
+        var contPridePtms  = await contPrideClient.FetchAsync(contId, contSeq);
+        var contPtmExPtms  = await contPtmExClient.FetchAsync(contId, contSeq);
+        var contAllPtms    = contUniProtPtms.Concat(contPridePtms).Concat(contPtmExPtms).ToList();
+
+        var contEntries = ProteoformBuilder.Build(contSeq, contAllPtms, includeTrunc, tolerance: 5.0);
+        foreach (var e in contEntries)
+            e.ModificationName = $"[{contId}] {e.ModificationName}";
+        proteoforms.AddRange(contEntries);
+        Console.WriteLine($"done — {contEntries.Count} entries added ({contAllPtms.Count} PTM annotations).");
+    }
+}
 
 // ── 7. .dmt spectrum analysis ─────────────────────────────────────────────
 Console.WriteLine();

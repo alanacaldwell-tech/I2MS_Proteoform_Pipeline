@@ -45,7 +45,28 @@ public static class SpectrumAnalyzer
             return new();
 
         // ── Step 5 + 6: match to database and count ions ──────────────────
-        return MatchAndCount(peaks, masses, database, matchWindow, ionCountingWindow);
+        var results = MatchAndCount(peaks, masses, database, matchWindow, ionCountingWindow);
+
+        // ── Step 7: report peaks that had no database match ───────────────
+        // Collect the rounded centroids of every matched peak so we can find the gaps.
+        var matchedCentroids = new HashSet<long>(results.Select(r => (long)Math.Round(r.ExperimentalCentroid)));
+        foreach (var peak in peaks)
+        {
+            if (matchedCentroids.Contains((long)Math.Round(peak.Centroid))) continue;
+            double lo = peak.Centroid - ionCountingWindow;
+            double hi = peak.Centroid + ionCountingWindow;
+            long ionCount = masses.LongCount(m => m >= lo && m <= hi);
+            results.Add((
+                new ProteoformEntry
+                {
+                    ModificationName = $"Unmatched peak ({peak.Centroid:F2} Da)",
+                    CentroidMass = peak.Centroid
+                },
+                peak.Centroid,
+                ionCount));
+        }
+
+        return results;
     }
 
     // ─────────────────────────────────────────────────────────────────────
