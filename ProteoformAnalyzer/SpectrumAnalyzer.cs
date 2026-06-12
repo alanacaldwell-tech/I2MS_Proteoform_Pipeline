@@ -49,7 +49,7 @@ public static class SpectrumAnalyzer
 
         // ── Step 7: report peaks that had no database match ───────────────
         // Collect the rounded centroids of every matched peak so we can find the gaps.
-        var matchedCentroids = new HashSet<long>(results.Select(r => (long)Math.Round(r.ExperimentalCentroid)));
+        var matchedCentroids = new HashSet<long>(results.Select(r => (long)Math.Round(r.Item2)));
         foreach (var peak in peaks)
         {
             if (matchedCentroids.Contains((long)Math.Round(peak.Centroid))) continue;
