@@ -24,7 +24,8 @@ public static class SpectrumAnalyzer
             string dmtPath,
             List<ProteoformEntry> database,
             double matchWindow = 2.0,
-            double ionCountingWindow = 5.0)
+            double ionCountingWindow = 5.0,
+            long minIonCount = 0)
     {
         // ── Step 1: read all masses ───────────────────────────────────────
         var masses = DmtParser.ReadMasses(dmtPath).ToList();
@@ -39,6 +40,16 @@ public static class SpectrumAnalyzer
             histogram[bin] = histogram.TryGetValue(bin, out long c) ? c + 1 : 1;
         }
 
+        // ── Step 2b: auto-estimate noise floor if no threshold supplied ───
+        // Scan the full mass range with non-overlapping windows of width
+        // 2*ionCountingWindow.  The median window ion count is used as a
+        // dataset-wide background estimate, which avoids the bias that a
+        // fixed local-flanking window introduces when two proteoforms are
+        // closely spaced (their flanking regions overlap each other's signal).
+        long noiseFloor = minIonCount > 0
+            ? minIonCount
+            : EstimateNoiseFloor(masses, ionCountingWindow);
+
         // ── Step 3 + 4: find local-maxima peaks and compute FWHM centroids ─
         var peaks = FindPeaks(histogram, masses);
         if (peaks.Count == 0)
@@ -51,6 +62,21 @@ public static class SpectrumAnalyzer
         // peaks of the same envelope.  Deduplicate by keeping only the tallest
         // peak within any ionCountingWindow-wide centroid window.
         peaks = DeduplicatePeaks(peaks, ionCountingWindow);
+
+        // ── Step 4c: noise floor filter ───────────────────────────────────
+        // Discard peaks whose ion count (within ±ionCountingWindow) is at or
+        // below the estimated background noise.  Counting here matches the same
+        // window used later in MatchAndCount so the numbers are consistent.
+        peaks = peaks.Where(p =>
+        {
+            double lo = p.Centroid - ionCountingWindow;
+            double hi = p.Centroid + ionCountingWindow;
+            long cnt = masses.LongCount(m => m >= lo && m <= hi);
+            return cnt > noiseFloor;
+        }).ToList();
+
+        if (peaks.Count == 0)
+            return new();
 
         // ── Step 5 + 6: match to database and count ions ──────────────────
         var results = MatchAndCount(peaks, masses, database, matchWindow, ionCountingWindow);
@@ -75,6 +101,52 @@ public static class SpectrumAnalyzer
         }
 
         return results;
+    }
+
+    /// <summary>
+    /// Estimates the background noise floor from the full ion mass list.
+    /// Scans non-overlapping windows of width 2*windowHalfWidth across the
+    /// entire mass range, collects ion counts per window, and returns the
+    /// median.  The median is robust to outliers caused by real proteoform
+    /// peaks, so it reflects the baseline background level.
+    /// </summary>
+    public static long EstimateNoiseFloor(List<double> masses, double windowHalfWidth)
+    {
+        if (masses.Count == 0) return 0;
+
+        double minMass = masses.Min();
+        double maxMass = masses.Max();
+        double windowWidth = windowHalfWidth * 2.0;
+
+        // Need at least a few windows to compute a meaningful median.
+        // If the mass range is narrower than 10 windows just return 0.
+        double span = maxMass - minMass;
+        int numWindows = (int)(span / windowWidth);
+        if (numWindows < 10) return 0;
+
+        // Sort once so window counts can be accumulated with a two-pointer scan.
+        var sorted = masses.OrderBy(m => m).ToArray();
+        var windowCounts = new List<long>(numWindows);
+
+        int left = 0;
+        for (int w = 0; w < numWindows; w++)
+        {
+            double lo = minMass + w * windowWidth;
+            double hi = lo + windowWidth;
+
+            // Advance left pointer past masses below this window.
+            while (left < sorted.Length && sorted[left] < lo) left++;
+
+            // Count masses in [lo, hi).
+            int right = left;
+            while (right < sorted.Length && sorted[right] < hi) right++;
+
+            windowCounts.Add(right - left);
+        }
+
+        // Return the median window count as the noise floor.
+        windowCounts.Sort();
+        return windowCounts[windowCounts.Count / 2];
     }
 
     // ─────────────────────────────────────────────────────────────────────

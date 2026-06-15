@@ -29,7 +29,8 @@ public static class CsvBatchMode
         double matchWindow = 2.0,
         double ionCountingWindow = 5.0,
         string? dmtFolder = null,
-        List<string>? contaminantIds = null)
+        List<string>? contaminantIds = null,
+        long minIonCount = 0)
     {
         // ── Parse input CSV ───────────────────────────────────────────────
         var rows = ReadInputCsv(inputCsvPath);
@@ -111,7 +112,7 @@ public static class CsvBatchMode
                 var proteoforms = ProteoformBuilder.Build(sequence, allPtms, includeTruncations, tolerance: 5.0,
                                                           proteinLabel: uniprotId);
                 var combinedDb  = MergeWithContaminants(proteoforms, contaminantEntries);
-                var (results, fileNames) = AnalyzeIfProvided(combinedDb, dmtFolder, matchWindow, ionCountingWindow);
+                var (results, fileNames) = AnalyzeIfProvided(combinedDb, dmtFolder, matchWindow, ionCountingWindow, minIonCount);
                 string outPath = ResolveOutputPath(proteinInput, customOutputPath, inputDir);
                 ExportSafe(combinedDb, results, fileNames, outPath);
                 success++;
@@ -124,7 +125,7 @@ public static class CsvBatchMode
                 var proteoforms = ProteoformBuilder.Build(sequence, new List<PtmAnnotation>(), includeTruncations,
                                                           tolerance: 5.0, proteinLabel: $"sequence_{i + 1}");
                 var combinedDb  = MergeWithContaminants(proteoforms, contaminantEntries);
-                var (results, fileNames) = AnalyzeIfProvided(combinedDb, dmtFolder, matchWindow, ionCountingWindow);
+                var (results, fileNames) = AnalyzeIfProvided(combinedDb, dmtFolder, matchWindow, ionCountingWindow, minIonCount);
                 string outPath = ResolveOutputPath($"sequence_{i + 1}", customOutputPath, inputDir);
                 ExportSafe(combinedDb, results, fileNames, outPath);
                 success++;
@@ -223,7 +224,8 @@ public static class CsvBatchMode
             List<ProteoformEntry> proteoforms,
             string? dmtFolder,
             double matchWindow,
-            double ionCountingWindow)
+            double ionCountingWindow,
+            long minIonCount = 0)
     {
         var emptyFileNames = new List<string>();
         if (string.IsNullOrEmpty(dmtFolder) || !Directory.Exists(dmtFolder))
@@ -244,7 +246,7 @@ public static class CsvBatchMode
         {
             try
             {
-                var matches = SpectrumAnalyzer.ProcessFile(filePath, proteoforms, matchWindow, ionCountingWindow);
+                var matches = SpectrumAnalyzer.ProcessFile(filePath, proteoforms, matchWindow, ionCountingWindow, minIonCount);
                 foreach (var (entry, centroid, count) in matches)
                 {
                     long roundedCentroid = (long)Math.Round(centroid);

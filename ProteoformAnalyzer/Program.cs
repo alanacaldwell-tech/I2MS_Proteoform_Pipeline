@@ -73,8 +73,19 @@ if (modeInput == "2")
         }
     }
 
+    long batchNoiseThreshold = 0;
+    if (!string.IsNullOrEmpty(batchDmtFolder) && Directory.Exists(batchDmtFolder))
+    {
+        Console.Write("Minimum ion count threshold — peaks at or below this value are discarded as noise\n" +
+                      "  (press Enter to auto-estimate from the dataset; recommended ~15–25 for I2MS): ");
+        string? batchNoiseStr = Console.ReadLine()?.Trim();
+        if (!string.IsNullOrEmpty(batchNoiseStr) &&
+            long.TryParse(batchNoiseStr, out long bnt) && bnt > 0)
+            batchNoiseThreshold = bnt;
+    }
+
     Console.WriteLine();
-    await CsvBatchMode.RunAsync(batchCsvPath, http, batchTrunc, batchMatchTol, batchIonWindow, batchDmtFolder, batchContaminants);
+    await CsvBatchMode.RunAsync(batchCsvPath, http, batchTrunc, batchMatchTol, batchIonWindow, batchDmtFolder, batchContaminants, batchNoiseThreshold);
     return;
 }
 
@@ -246,6 +257,7 @@ string? dmtFolder = Console.ReadLine()?.Trim().Trim('"');
 
 double matchTol = 2.0;
 double ionWindow = 5.0;
+long noiseThreshold = 0; // 0 = auto-estimate from dataset
 List<string> dmtFileNames = new();
 List<AnalysisResult> analysisResults = new();
 
@@ -271,6 +283,13 @@ if (!string.IsNullOrEmpty(dmtFolder))
                 System.Globalization.CultureInfo.InvariantCulture, out double iw) && iw > 0)
             ionWindow = iw;
 
+        Console.Write("Minimum ion count threshold — peaks at or below this value are discarded as noise\n" +
+                      "  (press Enter to auto-estimate from the dataset; recommended ~15–25 for I2MS): ");
+        string? noiseStr = Console.ReadLine()?.Trim();
+        if (!string.IsNullOrEmpty(noiseStr) &&
+            long.TryParse(noiseStr, out long nt) && nt > 0)
+            noiseThreshold = nt;
+
         var dmtFiles = Directory.GetFiles(dmtFolder, "*.dmt", SearchOption.TopDirectoryOnly)
                                 .OrderBy(f => f).ToArray();
         if (dmtFiles.Length == 0)
@@ -295,7 +314,7 @@ if (!string.IsNullOrEmpty(dmtFolder))
 
                 try
                 {
-                    var matches = SpectrumAnalyzer.ProcessFile(dmtFiles[f], proteoforms, matchTol, ionWindow);
+                    var matches = SpectrumAnalyzer.ProcessFile(dmtFiles[f], proteoforms, matchTol, ionWindow, noiseThreshold);
                     long totalIons = matches.Sum(m => m.IonCount);
                     Console.WriteLine($"{matches.Count} peak match(es), {totalIons:N0} ions");
 
