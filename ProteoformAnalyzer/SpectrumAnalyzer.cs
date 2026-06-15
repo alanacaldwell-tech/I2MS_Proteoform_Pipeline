@@ -64,6 +64,13 @@ public static class SpectrumAnalyzer
         // peak within any ionCountingWindow-wide centroid window.
         peaks = DeduplicatePeaks(peaks, ionCountingWindow);
 
+        // ── Step 4c: envelope width filter ───────────────────────────────
+        // Small molecules and single-ion artefacts occupy only one 1-Da bin
+        // (Fwhm = 1).  Real intact-protein isotope envelopes always span at
+        // least 2 Da at half-maximum even for the smallest proteins (~1 kDa).
+        // Discard any peak whose FWHM window is a single bin.
+        peaks = peaks.Where(p => p.Fwhm >= 2.0).ToList();
+
         // ── Step 5 + 6: match to database and count ions ──────────────────
         var results = MatchAndCount(peaks, masses, database, matchWindow, ionCountingWindow);
 
