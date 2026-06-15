@@ -35,6 +35,13 @@ if (modeInput == "2")
     Console.Write("Include N- and C-terminal truncations? (y/n, default y): ");
     bool batchTrunc = (Console.ReadLine()?.Trim().ToLower() ?? "y") != "n";
 
+    int batchMaxOccupancy = 12;
+    Console.Write("Max simultaneous modifications per type (default 12): ");
+    string? batchMaxOccStr = Console.ReadLine()?.Trim();
+    if (!string.IsNullOrEmpty(batchMaxOccStr) &&
+        int.TryParse(batchMaxOccStr, out int bmo) && bmo >= 1)
+        batchMaxOccupancy = bmo;
+
     double batchMatchTol = 2.0;
     Console.Write("Match tolerance in Da — max distance from peak centroid to database mass (default 2.0): ");
     string? batchMatchTolStr = Console.ReadLine()?.Trim();
@@ -85,7 +92,7 @@ if (modeInput == "2")
     }
 
     Console.WriteLine();
-    await CsvBatchMode.RunAsync(batchCsvPath, http, batchTrunc, batchMatchTol, batchIonWindow, batchDmtFolder, batchContaminants, batchNoiseThreshold);
+    await CsvBatchMode.RunAsync(batchCsvPath, http, batchTrunc, batchMatchTol, batchIonWindow, batchDmtFolder, batchContaminants, batchNoiseThreshold, batchMaxOccupancy);
     return;
 }
 
@@ -210,11 +217,19 @@ Console.WriteLine();
 Console.Write("Include N- and C-terminal truncations? (y/n, default y): ");
 bool includeTrunc = (Console.ReadLine()?.Trim().ToLower() ?? "y") != "n";
 
+int maxOccupancy = 12;
+Console.Write("Max simultaneous modifications per type (default 12, e.g. limits hyperphosphorylated proteins): ");
+string? maxOccStr = Console.ReadLine()?.Trim();
+if (!string.IsNullOrEmpty(maxOccStr) &&
+    int.TryParse(maxOccStr, out int mo) && mo >= 1)
+    maxOccupancy = mo;
+
 // ── 6. Build proteoform database ──────────────────────────────────────────
 Console.WriteLine();
-Console.WriteLine($"Building proteoform database (truncations: {includeTrunc})...");
+Console.WriteLine($"Building proteoform database (truncations: {includeTrunc}, max occupancy per PTM type: {maxOccupancy})...");
 var proteoforms = ProteoformBuilder.Build(sequence, allPtms, includeTrunc, tolerance: 5.0,
-                                         proteinLabel: uniprotId ?? "Target");
+                                         proteinLabel: uniprotId ?? "Target",
+                                         maxOccupancyPerFamily: maxOccupancy);
 Console.WriteLine($"Generated {proteoforms.Count} database entries.");
 
 // ── 6b. Contaminant proteins ──────────────────────────────────────────────
@@ -244,7 +259,8 @@ if ((Console.ReadLine()?.Trim().ToLower() ?? "n") == "y")
         var contAllPtms    = contUniProtPtms.Concat(contPridePtms).Concat(contPtmExPtms).ToList();
 
         var contEntries = ProteoformBuilder.Build(contSeq, contAllPtms, includeTrunc, tolerance: 5.0,
-                                                   proteinLabel: contId);
+                                                   proteinLabel: contId,
+                                                   maxOccupancyPerFamily: maxOccupancy);
         proteoforms.AddRange(contEntries);
         Console.WriteLine($"done — {contEntries.Count} entries added ({contAllPtms.Count} PTM annotations).");
     }

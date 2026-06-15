@@ -12,7 +12,8 @@ public static class ProteoformBuilder
         List<PtmAnnotation> allPtms,
         bool includeTruncations,
         double tolerance,
-        string proteinLabel = "")
+        string proteinLabel = "",
+        int maxOccupancyPerFamily = 12)
     {
         var entries = new List<ProteoformEntry>();
         var intactFormula = AminoAcidData.GetFormula(sequence);
@@ -32,15 +33,16 @@ public static class ProteoformBuilder
 
         // ── 3. Single-family PTM proteoforms (mono/di/tri/...) ────────────
         foreach (var family in ptmFamilies)
-            foreach (var entry in MakeSingleFamilyEntries(family, intactFormula, tolerance))
+            foreach (var entry in MakeSingleFamilyEntries(family, intactFormula, tolerance,
+                                                           maxOccupancy: maxOccupancyPerFamily))
                 entries.Add(entry);
 
         // ── 4. Cross-family PTM combinations ─────────────────────────────
         // Generate all subsets of 2..MaxCombinationDepth different families,
-        // each at every valid occupancy level (1..SiteCount).
+        // each at every valid occupancy level (1..min(SiteCount, maxOccupancyPerFamily)).
         // Same-family combinations (e.g. mono+di phospho = tri-phospho) are
         // already covered by step 3 and are excluded here.
-        foreach (var combo in CrossFamilyCombinations(ptmFamilies, MaxCombinationDepth))
+        foreach (var combo in CrossFamilyCombinations(ptmFamilies, MaxCombinationDepth, maxOccupancyPerFamily))
         {
             double totalDelta = combo.Sum(kv => kv.Family.Delta * kv.Occupancy);
             var envelope = IsotopeCalculator.ComputeFromDelta(intactFormula, totalDelta);
@@ -90,11 +92,12 @@ public static class ProteoformBuilder
                 // 5b. Truncation + each single PTM family at each occupancy level
                 foreach (var family in truncFamilies)
                     foreach (var entry in MakeSingleFamilyEntries(
-                        family, trunc.Formula, tolerance, prefix: trunc.Name))
+                        family, trunc.Formula, tolerance, prefix: trunc.Name,
+                        maxOccupancy: maxOccupancyPerFamily))
                         entries.Add(entry);
 
                 // 5c. Truncation + cross-family PTM combinations
-                foreach (var combo in CrossFamilyCombinations(truncFamilies, MaxCombinationDepth))
+                foreach (var combo in CrossFamilyCombinations(truncFamilies, MaxCombinationDepth, maxOccupancyPerFamily))
                 {
                     double totalDelta = combo.Sum(kv => kv.Family.Delta * kv.Occupancy);
                     var envelope = IsotopeCalculator.ComputeFromDelta(trunc.Formula, totalDelta);
@@ -158,7 +161,7 @@ public static class ProteoformBuilder
     /// combined with itself.
     /// </summary>
     private static IEnumerable<List<OccupiedFamily>> CrossFamilyCombinations(
-        List<PtmFamily> families, int maxDepth)
+        List<PtmFamily> families, int maxDepth, int maxOccupancy = int.MaxValue)
     {
         int n = families.Count;
         if (n < 2) yield break;
@@ -168,7 +171,7 @@ public static class ProteoformBuilder
         {
             // For each chosen subset, iterate all occupancy combinations
             var subFamilies = indices.Select(i => families[i]).ToList();
-            foreach (var occupancies in OccupancyProduct(subFamilies))
+            foreach (var occupancies in OccupancyProduct(subFamilies, maxOccupancy))
             {
                 yield return indices
                     .Select((idx, pos) => new OccupiedFamily(families[idx], occupancies[pos]))
@@ -204,23 +207,24 @@ public static class ProteoformBuilder
     /// Yields every combination of occupancy values (1..SiteCount) for a list
     /// of families — i.e. the Cartesian product of [1..S_i] for each family i.
     /// </summary>
-    private static IEnumerable<List<int>> OccupancyProduct(List<PtmFamily> families)
+    private static IEnumerable<List<int>> OccupancyProduct(List<PtmFamily> families, int maxOccupancy = int.MaxValue)
     {
-        return OccupancyProductFrom(families, 0, new List<int>());
+        return OccupancyProductFrom(families, 0, new List<int>(), maxOccupancy);
     }
 
     private static IEnumerable<List<int>> OccupancyProductFrom(
-        List<PtmFamily> families, int pos, List<int> current)
+        List<PtmFamily> families, int pos, List<int> current, int maxOccupancy)
     {
         if (pos == families.Count)
         {
             yield return new List<int>(current);
             yield break;
         }
-        for (int k = 1; k <= families[pos].SiteCount; k++)
+        int cap = Math.Min(families[pos].SiteCount, maxOccupancy);
+        for (int k = 1; k <= cap; k++)
         {
             current.Add(k);
-            foreach (var combo in OccupancyProductFrom(families, pos + 1, current))
+            foreach (var combo in OccupancyProductFrom(families, pos + 1, current, maxOccupancy))
                 yield return combo;
             current.RemoveAt(current.Count - 1);
         }
@@ -265,9 +269,11 @@ public static class ProteoformBuilder
         PtmFamily family,
         MolecularFormula baseFormula,
         double tolerance,
-        string? prefix = null)
+        string? prefix = null,
+        int maxOccupancy = int.MaxValue)
     {
-        for (int k = 1; k <= family.SiteCount; k++)
+        int cap = Math.Min(family.SiteCount, maxOccupancy);
+        for (int k = 1; k <= cap; k++)
         {
             var envelope = IsotopeCalculator.ComputeFromDelta(baseFormula, family.Delta * k);
             string modName = FormatMultiplicity(family.BestName, family.FamilyKey, k, family.SiteCount);

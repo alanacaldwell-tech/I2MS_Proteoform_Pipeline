@@ -30,7 +30,8 @@ public static class CsvBatchMode
         double ionCountingWindow = 5.0,
         string? dmtFolder = null,
         List<string>? contaminantIds = null,
-        long minIonCount = 0)
+        long minIonCount = 0,
+        int maxOccupancyPerFamily = 12)
     {
         // ── Parse input CSV ───────────────────────────────────────────────
         var rows = ReadInputCsv(inputCsvPath);
@@ -63,7 +64,8 @@ public static class CsvBatchMode
                     .Concat(await cPtmEx.FetchAsync(cId, cSeq))
                     .ToList();
                 var cEntries = ProteoformBuilder.Build(cSeq, cPtms, includeTruncations, tolerance: 5.0,
-                                                       proteinLabel: cId);
+                                                       proteinLabel: cId,
+                                                       maxOccupancyPerFamily: maxOccupancyPerFamily);
                 contaminantEntries.AddRange(cEntries);
                 Console.WriteLine($"done ({cEntries.Count} entries).");
             }
@@ -110,7 +112,8 @@ public static class CsvBatchMode
 
                 // Build database and run spectrum analysis
                 var proteoforms = ProteoformBuilder.Build(sequence, allPtms, includeTruncations, tolerance: 5.0,
-                                                          proteinLabel: uniprotId);
+                                                          proteinLabel: uniprotId,
+                                                          maxOccupancyPerFamily: maxOccupancyPerFamily);
                 var combinedDb  = MergeWithContaminants(proteoforms, contaminantEntries);
                 var (results, fileNames) = AnalyzeIfProvided(combinedDb, dmtFolder, matchWindow, ionCountingWindow, minIonCount);
                 string outPath = ResolveOutputPath(proteinInput, customOutputPath, inputDir);
@@ -123,7 +126,8 @@ public static class CsvBatchMode
                 Console.WriteLine($"  Treating as raw sequence ({sequence.Length} aa). No database query.");
 
                 var proteoforms = ProteoformBuilder.Build(sequence, new List<PtmAnnotation>(), includeTruncations,
-                                                          tolerance: 5.0, proteinLabel: $"sequence_{i + 1}");
+                                                          tolerance: 5.0, proteinLabel: $"sequence_{i + 1}",
+                                                          maxOccupancyPerFamily: maxOccupancyPerFamily);
                 var combinedDb  = MergeWithContaminants(proteoforms, contaminantEntries);
                 var (results, fileNames) = AnalyzeIfProvided(combinedDb, dmtFolder, matchWindow, ionCountingWindow, minIonCount);
                 string outPath = ResolveOutputPath($"sequence_{i + 1}", customOutputPath, inputDir);
