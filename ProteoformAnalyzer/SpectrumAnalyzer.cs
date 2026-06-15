@@ -139,10 +139,10 @@ public static class SpectrumAnalyzer
 
         if (nonEmptyCounts.Count == 0) return 0;
 
-        // 25th percentile of non-empty window counts = noise floor.
+        // 25th percentile of non-empty window counts = noise floor, minimum 10.
         nonEmptyCounts.Sort();
         int p25index = (int)Math.Floor(nonEmptyCounts.Count * 0.25);
-        return nonEmptyCounts[p25index];
+        return Math.Max(10L, nonEmptyCounts[p25index]);
     }
 
     // ─────────────────────────────────────────────────────────────────────
