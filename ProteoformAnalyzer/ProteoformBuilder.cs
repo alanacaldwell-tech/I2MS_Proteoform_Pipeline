@@ -158,7 +158,9 @@ public static class ProteoformBuilder
     /// Yields every combination of 2..maxDepth distinct PTM families where
     /// each chosen family has occupancy 1..SiteCount.
     /// Families are taken from distinct indices so the same family is never
-    /// combined with itself.
+    /// combined with itself. Combinations that are not biologically placeable
+    /// (more PTMs than distinct candidate residues — see <see cref="IsSitePlaceable"/>)
+    /// are skipped.
     /// </summary>
     private static IEnumerable<List<OccupiedFamily>> CrossFamilyCombinations(
         List<PtmFamily> families, int maxDepth, int maxOccupancy = int.MaxValue)
@@ -173,11 +175,57 @@ public static class ProteoformBuilder
             var subFamilies = indices.Select(i => families[i]).ToList();
             foreach (var occupancies in OccupancyProduct(subFamilies, maxOccupancy))
             {
-                yield return indices
+                var combo = indices
                     .Select((idx, pos) => new OccupiedFamily(families[idx], occupancies[pos]))
                     .ToList();
+                if (IsSitePlaceable(combo))
+                    yield return combo;
             }
         }
+    }
+
+    /// <summary>
+    /// Biological-feasibility gate for a cross-family PTM combination.
+    ///
+    /// A residue can carry at most one PTM at a time: two different modification
+    /// families cannot occupy the same site simultaneously. A combination is
+    /// therefore placeable only if its families can be assigned to enough
+    /// *distinct* residues to host their combined occupancy. This is exactly the
+    /// defect (demand) form of Hall's theorem on the bipartite graph
+    /// families → candidate sites: a valid assignment exists iff for every subset
+    /// U of the families, the combined occupancy of U does not exceed the number
+    /// of distinct residues those families can sit on.
+    ///
+    /// PTMs whose position is unknown / whole-protein (Position ≤ 0) are modelled
+    /// as private "phantom" sites — they cannot collide with anything because we
+    /// cannot prove which residue they occupy, so they never prune a combination.
+    ///
+    /// Note: the rare "modification-on-a-modification" case (one PTM building on
+    /// another's product, e.g. a stacked mark on the same residue) is intentionally
+    /// not modelled here — the source databases do not encode which families stack
+    /// on which, so we apply the dominant one-PTM-per-site rule.
+    /// </summary>
+    private static bool IsSitePlaceable(IReadOnlyList<OccupiedFamily> combo)
+    {
+        int n = combo.Count;
+        // Check Hall's condition over every non-empty subset of the families.
+        // n ≤ MaxCombinationDepth (3), so this is at most 2^3 - 1 = 7 iterations.
+        for (int mask = 1; mask < (1 << n); mask++)
+        {
+            int demand = 0;
+            int phantomSites = 0;          // private unknown-position slots
+            var knownSites = new HashSet<int>();
+            for (int i = 0; i < n; i++)
+            {
+                if ((mask & (1 << i)) == 0) continue;
+                var fam = combo[i].Family;
+                demand += combo[i].Occupancy;
+                phantomSites += fam.UnknownSiteCount;
+                foreach (int pos in fam.KnownSites) knownSites.Add(pos);
+            }
+            if (demand > knownSites.Count + phantomSites) return false;
+        }
+        return true;
     }
 
     /// <summary>Yields all subsets of {0..n-1} with size in [minSize, maxSize].</summary>
@@ -236,7 +284,9 @@ public static class ProteoformBuilder
         string FamilyKey,
         string BestName,
         double Delta,
-        int SiteCount);
+        int SiteCount,
+        IReadOnlyList<int> KnownSites,
+        int UnknownSiteCount);
 
     private static List<PtmFamily> BuildFamilyGroups(List<PtmAnnotation> allPtms)
     {
@@ -260,7 +310,16 @@ public static class ProteoformBuilder
                                  .FirstOrDefault();
                 string name = g.OrderByDescending(p => p.ModificationName.Length)
                                 .First().ModificationName;
-                return new PtmFamily(g.Key, name, delta, g.Count());
+
+                // Candidate residues for this family. Positions are already
+                // distinct (the previous grouping keyed on position). Split into
+                // known residues, which compete for placement, and unknown /
+                // whole-protein sites (Position ≤ 0), which are treated as private
+                // slots that never collide.
+                var knownSites = g.Select(p => p.Position).Where(pos => pos > 0).Distinct().ToList();
+                int unknownSiteCount = g.Count(p => p.Position <= 0);
+
+                return new PtmFamily(g.Key, name, delta, g.Count(), knownSites, unknownSiteCount);
             })
             .ToList();
     }
