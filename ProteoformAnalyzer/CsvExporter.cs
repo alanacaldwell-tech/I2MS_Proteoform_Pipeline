@@ -20,13 +20,17 @@ public static class CsvExporter
     }
 
     /// <summary>
-    /// Exports matched proteoforms with experimental centroids, match-quality columns,
-    /// and per-file ion counts.
+    /// Exports matched proteoforms with match-quality columns, per-file ion counts, and
+    /// per-file experimental masses. Each database proteoform is one row: slightly different
+    /// experimental masses that track to the same proteoform are merged, with the single
+    /// "Mean Experimental Mass" column holding the ion-count-weighted representative and the
+    /// per-file experimental masses preserved in trailing columns.
     /// Columns: Protein | Modification Name | Alternative Name | Predicted Mass (Da) |
-    ///          Experimental Centroid (Da) | Mass Error (Da) | Charge States Observed |
-    ///          # Charge States | Match Rank | [file1] Ion Count | [file2] Ion Count | ...
-    /// The variable per-file ion-count columns stay last so the fixed columns are stable.
-    /// Only proteoforms matched in at least one file are included.
+    ///          Mean Experimental Mass (Da) | Mass Error (Da) | Charge States Observed |
+    ///          # Charge States | Match Rank |
+    ///          [file1] Ion Count | … | [file1] Exp Mass (Da) | …
+    /// The variable per-file columns stay last (ion counts first, then experimental masses)
+    /// so the fixed columns are stable. Only proteoforms matched in at least one file are included.
     /// </summary>
     public static void ExportResults(
         List<AnalysisResult> results,
@@ -35,11 +39,13 @@ public static class CsvExporter
     {
         using var w = new StreamWriter(path);
 
-        // Header
-        var header = "Protein,Modification Name,Alternative Name,Predicted Centroid Mass (Da),Experimental Peak Centroid (Da)," +
+        // Header — fixed columns, then per-file ion counts, then per-file experimental masses.
+        var header = "Protein,Modification Name,Alternative Name,Predicted Centroid Mass (Da),Mean Experimental Mass (Da)," +
                      "Mass Error (Da),Charge States Observed,# Charge States,Match Rank";
         foreach (var fn in fileNames)
             header += $",{Csv(fn)} Ion Count";
+        foreach (var fn in fileNames)
+            header += $",{Csv(fn)} Exp Mass (Da)";
         w.WriteLine(header);
 
         foreach (var r in results)
@@ -55,10 +61,19 @@ public static class CsvExporter
             string rank      = r.RankWithinPeak.ToString();
             string row       = $"{protein},{name},{altName},{pred},{expt},{massErr},{charges},{nCharges},{rank}";
 
+            // Per-file ion counts (0 where undetected)
             foreach (var fn in fileNames)
             {
                 long cnt = r.IonCountsPerFile.TryGetValue(fn, out long c) ? c : 0;
                 row += $",{cnt}";
+            }
+
+            // Per-file experimental masses (blank where undetected)
+            foreach (var fn in fileNames)
+            {
+                row += r.ExperimentalMassPerFile.TryGetValue(fn, out double mass)
+                    ? $",{mass:F4}"
+                    : ",";
             }
 
             w.WriteLine(row);

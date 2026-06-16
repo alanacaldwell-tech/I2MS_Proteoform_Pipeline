@@ -49,15 +49,20 @@ public class SpectrumPeak
 public class AnalysisResult
 {
     public ProteoformEntry DatabaseEntry { get; init; } = null!;
-    /// <summary>Experimental FWHM centroid of the peak that matched this proteoform (Da).</summary>
+    /// <summary>Representative experimental mass: the ion-count-weighted mean of the per-file
+    /// experimental masses (Da). Slightly different experimental masses that track to this same
+    /// proteoform are merged into this one value; the per-file detail lives in ExperimentalMassPerFile.</summary>
     public double ExperimentalCentroid { get; set; }
-    /// <summary>Predicted centroid minus experimental centroid (Da); signed.</summary>
+    /// <summary>Predicted centroid minus the representative experimental mass (Da); signed.</summary>
     public double MassErrorDa { get; set; }
-    /// <summary>Rank of this assignment among all entries matching the same peak (1 = best).</summary>
+    /// <summary>Best (lowest) rank this assignment achieved among entries matching a peak (1 = best).</summary>
     public int RankWithinPeak { get; set; }
     /// <summary>Distinct charge states observed for this proteoform, unioned across all .dmt files.
     /// A larger set is stronger corroboration that the assignment is real.</summary>
     public SortedSet<int> ChargeStatesObserved { get; set; } = new();
     /// <summary>filename → ion count within the integration window of the database centroid (0 if not matched in that file).</summary>
     public Dictionary<string, long> IonCountsPerFile { get; set; } = new();
+    /// <summary>filename → experimental peak mass observed for this proteoform in that file (Da).
+    /// Absent when the proteoform was not detected in a given file.</summary>
+    public Dictionary<string, double> ExperimentalMassPerFile { get; set; } = new();
 }
