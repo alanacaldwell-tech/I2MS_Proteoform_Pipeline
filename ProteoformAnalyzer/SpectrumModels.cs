@@ -1,6 +1,30 @@
 namespace ProteoformAnalyzer;
 
 /// <summary>
+/// A single individually-measured ion from a .dmt file: its neutral mass and the
+/// charge state it was observed at. In I2MS every ion is measured individually, so
+/// the charge is real per-ion information (not inferred from an envelope).
+/// A value struct keeps the full ion list as one contiguous allocation — .dmt files
+/// can hold millions of ions.
+/// </summary>
+public readonly record struct IonMeasurement(double Mass, int Charge);
+
+/// <summary>
+/// One experimental peak matched (or not) to a database proteoform within a single
+/// .dmt file, carrying the evidence used for scoring.
+/// </summary>
+public record SpectrumMatch(
+    ProteoformEntry Entry,
+    double ExperimentalCentroid,
+    long IonCount,
+    // MassErrorDa: predicted centroid minus experimental centroid (Da), signed.
+    double MassErrorDa,
+    // ChargeStates: distinct charge states observed within the integration window (sorted).
+    IReadOnlyList<int> ChargeStates,
+    // RankWithinPeak: rank among all entries matching the same peak (1 = best).
+    int RankWithinPeak);
+
+/// <summary>
 /// One peak identified in a 1-Da binned mass spectrum.
 /// </summary>
 public class SpectrumPeak
@@ -27,6 +51,13 @@ public class AnalysisResult
     public ProteoformEntry DatabaseEntry { get; init; } = null!;
     /// <summary>Experimental FWHM centroid of the peak that matched this proteoform (Da).</summary>
     public double ExperimentalCentroid { get; set; }
-    /// <summary>filename → ion count within ±ionCountingWindow of the database centroid (0 if not matched in that file).</summary>
+    /// <summary>Predicted centroid minus experimental centroid (Da); signed.</summary>
+    public double MassErrorDa { get; set; }
+    /// <summary>Rank of this assignment among all entries matching the same peak (1 = best).</summary>
+    public int RankWithinPeak { get; set; }
+    /// <summary>Distinct charge states observed for this proteoform, unioned across all .dmt files.
+    /// A larger set is stronger corroboration that the assignment is real.</summary>
+    public SortedSet<int> ChargeStatesObserved { get; set; } = new();
+    /// <summary>filename → ion count within the integration window of the database centroid (0 if not matched in that file).</summary>
     public Dictionary<string, long> IonCountsPerFile { get; set; } = new();
 }

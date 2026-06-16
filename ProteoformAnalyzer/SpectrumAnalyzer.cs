@@ -19,7 +19,13 @@ public static class SpectrumAnalyzer
     // the typical inter-proteoform spacing, so one real isotope envelope produces exactly one peak.
     private const int NeighbourhoodRadius = 5;
 
-    public static List<(ProteoformEntry Entry, double ExperimentalCentroid, long IonCount)>
+    // Ion-counting window half-width, in units of the predicted isotope-envelope σ.
+    // 3σ captures ~99.7% of a Gaussian envelope, so the integration width scales with
+    // protein size instead of using a single fixed window. The user-supplied window acts
+    // as a floor (see MatchAndCount), so small proteoforms never integrate below it.
+    private const double EnvelopeSigmaK = 3.0;
+
+    public static List<SpectrumMatch>
         ProcessFile(
             string dmtPath,
             List<ProteoformEntry> database,
@@ -27,14 +33,21 @@ public static class SpectrumAnalyzer
             double ionCountingWindow = 5.0,
             long minIonCount = 0)
     {
-        // ── Step 1: read all masses ───────────────────────────────────────
-        var masses = DmtParser.ReadMasses(dmtPath).ToList();
-        if (masses.Count == 0)
+        // ── Step 1: read all ions and sort once by mass ───────────────────
+        // Sorting once lets every downstream window query use binary search
+        // instead of re-scanning the full ion list, and lets us collect the
+        // charge states present in any mass window from a contiguous slice.
+        var ions = DmtParser.ReadIons(dmtPath).ToList();
+        if (ions.Count == 0)
             return new();
+
+        ions.Sort((a, b) => a.Mass.CompareTo(b.Mass));
+        var sortedMasses = new double[ions.Count];
+        for (int i = 0; i < ions.Count; i++) sortedMasses[i] = ions[i].Mass;
 
         // ── Step 2: build 1-Da histogram ─────────────────────────────────
         var histogram = new Dictionary<int, long>();
-        foreach (double m in masses)
+        foreach (double m in sortedMasses)
         {
             int bin = (int)Math.Floor(m);
             histogram[bin] = histogram.TryGetValue(bin, out long c) ? c + 1 : 1;
@@ -42,17 +55,17 @@ public static class SpectrumAnalyzer
 
         // ── Step 2b: auto-estimate noise floor if no threshold supplied ───
         // Scan the full mass range with non-overlapping windows of width
-        // 2*ionCountingWindow.  The median window ion count is used as a
-        // dataset-wide background estimate, which avoids the bias that a
+        // 2*ionCountingWindow.  The 25th-percentile window ion count is used as
+        // a dataset-wide background estimate, which avoids the bias that a
         // fixed local-flanking window introduces when two proteoforms are
         // closely spaced (their flanking regions overlap each other's signal).
         long noiseFloor = minIonCount > 0
             ? minIonCount
-            : EstimateNoiseFloor(masses, ionCountingWindow);
+            : EstimateNoiseFloor(sortedMasses, ionCountingWindow);
         Console.WriteLine($"  Noise floor: {noiseFloor} ions (peaks with ≤ {noiseFloor} ions will be discarded)");
 
         // ── Step 3 + 4: find local-maxima peaks and compute FWHM centroids ─
-        var peaks = FindPeaks(histogram, masses);
+        var peaks = FindPeaks(histogram, sortedMasses);
         if (peaks.Count == 0)
             return new();
 
@@ -71,33 +84,35 @@ public static class SpectrumAnalyzer
         // Discard any peak whose FWHM window is a single bin.
         peaks = peaks.Where(p => p.Fwhm >= 2.0).ToList();
 
-        // ── Step 5 + 6: match to database and count ions ──────────────────
-        var results = MatchAndCount(peaks, masses, database, matchWindow, ionCountingWindow);
+        // ── Step 5 + 6: match to database, count ions, score and rank ─────
+        var results = MatchAndCount(peaks, ions, sortedMasses, database, matchWindow, ionCountingWindow);
 
         // ── Step 7: report peaks that had no database match ───────────────
         // Collect the rounded centroids of every matched peak so we can find the gaps.
-        var matchedCentroids = new HashSet<long>(results.Select(r => (long)Math.Round(r.Item2)));
+        var matchedCentroids = new HashSet<long>(results.Select(r => (long)Math.Round(r.ExperimentalCentroid)));
         foreach (var peak in peaks)
         {
             if (matchedCentroids.Contains((long)Math.Round(peak.Centroid))) continue;
-            double lo = peak.Centroid - ionCountingWindow;
-            double hi = peak.Centroid + ionCountingWindow;
-            long ionCount = masses.LongCount(m => m >= lo && m <= hi);
-            results.Add((
+            var (ionCount, charges) = CountWindow(
+                ions, sortedMasses, peak.Centroid - ionCountingWindow, peak.Centroid + ionCountingWindow);
+            results.Add(new SpectrumMatch(
                 new ProteoformEntry
                 {
                     ModificationName = $"Unmatched peak ({peak.Centroid:F2} Da)",
                     CentroidMass = peak.Centroid
                 },
                 peak.Centroid,
-                ionCount));
+                ionCount,
+                MassErrorDa: 0.0,
+                ChargeStates: charges,
+                RankWithinPeak: 1));
         }
 
         // ── Step 8: noise floor filter ────────────────────────────────────
         // Filter is applied to the final ion counts (the same values written
         // to the CSV) rather than to raw peaks, so the threshold is directly
         // comparable to what the user sees in the output.
-        results = results.Where(r => r.Item3 > noiseFloor).ToList();
+        results = results.Where(r => r.IonCount > noiseFloor).ToList();
 
         return results;
     }
@@ -112,20 +127,20 @@ public static class SpectrumAnalyzer
     /// that noise range while being insensitive to the handful of high-count
     /// real-proteoform windows that would skew the median upward.
     /// </summary>
-    public static long EstimateNoiseFloor(List<double> masses, double windowHalfWidth)
+    public static long EstimateNoiseFloor(double[] sortedMasses, double windowHalfWidth)
     {
-        if (masses.Count == 0) return 0;
+        if (sortedMasses.Length == 0) return 0;
 
-        double minMass = masses.Min();
-        double maxMass = masses.Max();
+        double minMass = sortedMasses[0];
+        double maxMass = sortedMasses[^1];
         double windowWidth = windowHalfWidth * 2.0;
 
         double span = maxMass - minMass;
         int numWindows = (int)(span / windowWidth);
+        // Too few windows to characterise a background — skip noise filtering entirely.
         if (numWindows < 10) return 0;
 
-        // Sort once; use a two-pointer scan for O(n) window counting.
-        var sorted = masses.OrderBy(m => m).ToArray();
+        // Two-pointer scan over the already-sorted masses for O(n) window counting.
         var nonEmptyCounts = new List<long>();
 
         int left = 0;
@@ -134,10 +149,10 @@ public static class SpectrumAnalyzer
             double lo = minMass + w * windowWidth;
             double hi = lo + windowWidth;
 
-            while (left < sorted.Length && sorted[left] < lo) left++;
+            while (left < sortedMasses.Length && sortedMasses[left] < lo) left++;
 
             int right = left;
-            while (right < sorted.Length && sorted[right] < hi) right++;
+            while (right < sortedMasses.Length && sortedMasses[right] < hi) right++;
 
             long count = right - left;
             if (count > 0)
@@ -156,7 +171,7 @@ public static class SpectrumAnalyzer
 
     private static List<SpectrumPeak> FindPeaks(
         Dictionary<int, long> histogram,
-        List<double> masses)
+        double[] sortedMasses)
     {
         if (histogram.Count == 0) return new();
 
@@ -208,26 +223,23 @@ public static class SpectrumAnalyzer
                 rightBin = i;
             }
 
-            // Precise centroid: intensity-weighted mean of raw masses within the FWHM window
-            // Window spans [leftBin, rightBin + 1) in Da
+            // Precise centroid: mean of raw masses within the FWHM window
+            // Window spans [leftBin, rightBin + 1) in Da. Binary search bounds the
+            // contiguous slice of the sorted mass array instead of scanning all ions.
             double windowLo = leftBin;
             double windowHi = rightBin + 1.0;
 
-            double sumMass = 0, sumCount = 0;
-            foreach (double m in masses)
-            {
-                if (m >= windowLo && m < windowHi)
-                {
-                    sumMass += m;
-                    sumCount += 1;
-                }
-            }
+            int sliceStart = LowerBound(sortedMasses, windowLo);   // first mass >= windowLo
+            int sliceEnd   = LowerBound(sortedMasses, windowHi);   // first mass >= windowHi (exclusive)
+            int sliceCount = sliceEnd - sliceStart;
+            if (sliceCount == 0) continue;
 
-            if (sumCount == 0) continue;
+            double sumMass = 0;
+            for (int i = sliceStart; i < sliceEnd; i++) sumMass += sortedMasses[i];
 
             peaks.Add(new SpectrumPeak
             {
-                Centroid = sumMass / sumCount,
+                Centroid = sumMass / sliceCount,
                 Height   = height,
                 Fwhm     = rightBin - leftBin + 1.0,
                 LeftBin  = leftBin,
@@ -253,33 +265,95 @@ public static class SpectrumAnalyzer
         return kept;
     }
 
-    private static List<(ProteoformEntry, double, long)> MatchAndCount(
+    private static List<SpectrumMatch> MatchAndCount(
         List<SpectrumPeak> peaks,
-        List<double> masses,
+        IReadOnlyList<IonMeasurement> ions,
+        double[] sortedMasses,
         List<ProteoformEntry> database,
         double matchWindow,
         double ionCountingWindow)
     {
-        var results = new List<(ProteoformEntry, double, long)>();
+        var results = new List<SpectrumMatch>();
 
         foreach (var peak in peaks)
         {
+            // Gather every database entry whose predicted mass falls within matchWindow
+            // of this peak, then rank them so ambiguous assignments are ordered by evidence.
+            var candidates = new List<SpectrumMatch>();
             foreach (var entry in database)
             {
                 // Match: peak FWHM centroid must be within matchWindow of the database predicted mass
                 if (Math.Abs(entry.CentroidMass - peak.Centroid) > matchWindow)
                     continue;
 
-                // Count ALL ions within ±ionCountingWindow of the database entry centroid.
-                // This captures the full proteoform signal (all isotopes), not just one bin.
-                double lo = entry.CentroidMass - ionCountingWindow;
-                double hi = entry.CentroidMass + ionCountingWindow;
-                long ionCount = masses.LongCount(m => m >= lo && m <= hi);
+                // Integrate over an adaptive window: ±max(user window, k·σ) of the predicted
+                // envelope, so large proteoforms capture their full (wider) isotope envelope
+                // while the user-supplied window remains a floor for small ones.
+                double window = Math.Max(ionCountingWindow, EnvelopeSigmaK * (entry.Envelope?.Sigma ?? 0.0));
+                var (ionCount, charges) = CountWindow(
+                    ions, sortedMasses, entry.CentroidMass - window, entry.CentroidMass + window);
 
-                results.Add((entry, peak.Centroid, ionCount));
+                double massError = entry.CentroidMass - peak.Centroid;
+                candidates.Add(new SpectrumMatch(entry, peak.Centroid, ionCount, massError, charges, 0));
             }
+
+            // Rank within this peak: more corroborating charge states is the stronger signal
+            // (a real proteoform is seen at several charges); break ties by smaller mass error.
+            var ranked = candidates
+                .OrderByDescending(c => c.ChargeStates.Count)
+                .ThenBy(c => Math.Abs(c.MassErrorDa))
+                .ToList();
+            for (int r = 0; r < ranked.Count; r++)
+                results.Add(ranked[r] with { RankWithinPeak = r + 1 });
         }
 
         return results;
+    }
+
+    // ── Sorted-mass window helpers ────────────────────────────────────────
+
+    /// <summary>First index i with sortedMasses[i] >= value (lower bound).</summary>
+    private static int LowerBound(double[] sortedMasses, double value)
+    {
+        int lo = 0, hi = sortedMasses.Length;
+        while (lo < hi)
+        {
+            int mid = (lo + hi) >> 1;
+            if (sortedMasses[mid] < value) lo = mid + 1;
+            else hi = mid;
+        }
+        return lo;
+    }
+
+    /// <summary>First index i with sortedMasses[i] > value (upper bound).</summary>
+    private static int UpperBound(double[] sortedMasses, double value)
+    {
+        int lo = 0, hi = sortedMasses.Length;
+        while (lo < hi)
+        {
+            int mid = (lo + hi) >> 1;
+            if (sortedMasses[mid] <= value) lo = mid + 1;
+            else hi = mid;
+        }
+        return lo;
+    }
+
+    /// <summary>
+    /// Counts ions in the inclusive mass range [lo, hi] and returns the distinct charge
+    /// states observed there (sorted). Both come from the same contiguous slice of the
+    /// mass-sorted ion list, so the cost is O(log n + slice) rather than O(n).
+    /// </summary>
+    private static (long Count, IReadOnlyList<int> Charges) CountWindow(
+        IReadOnlyList<IonMeasurement> ions, double[] sortedMasses, double lo, double hi)
+    {
+        int start = LowerBound(sortedMasses, lo);   // first mass >= lo
+        int end   = UpperBound(sortedMasses, hi);   // first mass >  hi (so [start,end) is inclusive of hi)
+
+        var charges = new HashSet<int>();
+        for (int i = start; i < end; i++) charges.Add(ions[i].Charge);
+
+        var sortedCharges = charges.ToList();
+        sortedCharges.Sort();
+        return (end - start, sortedCharges);
     }
 }

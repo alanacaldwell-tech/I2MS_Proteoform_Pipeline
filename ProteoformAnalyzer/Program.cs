@@ -306,68 +306,10 @@ if (!string.IsNullOrEmpty(dmtFolder))
             long.TryParse(noiseStr, out long nt) && nt > 0)
             noiseThreshold = nt;
 
-        var dmtFiles = Directory.GetFiles(dmtFolder, "*.dmt", SearchOption.TopDirectoryOnly)
-                                .OrderBy(f => f).ToArray();
-        if (dmtFiles.Length == 0)
-        {
-            Console.WriteLine("  No .dmt files found.");
-        }
-        else
-        {
-            dmtFileNames = dmtFiles.Select(Path.GetFileName).ToList()!;
-            Console.WriteLine($"  Found {dmtFiles.Length} .dmt file(s).");
-            Console.WriteLine();
-
-            // Key = (modName, predictedMass, roundedExptCentroid) so that multiple peaks
-            // matching the same database entry appear as separate rows, while the same
-            // peak detected across multiple files is merged into one row.
-            var resultMap = new Dictionary<(string, double, long), AnalysisResult>();
-
-            for (int f = 0; f < dmtFiles.Length; f++)
-            {
-                string fileName = dmtFileNames[f];
-                Console.Write($"  [{f + 1}/{dmtFiles.Length}] {fileName} — binning & peak-finding ... ");
-
-                try
-                {
-                    var matches = SpectrumAnalyzer.ProcessFile(dmtFiles[f], proteoforms, matchTol, ionWindow, noiseThreshold);
-                    long totalIons = matches.Sum(m => m.IonCount);
-                    Console.WriteLine($"{matches.Count} peak match(es), {totalIons:N0} ions");
-
-                    foreach (var (entry, exptCentroid, ionCount) in matches)
-                    {
-                        long roundedCentroid = (long)Math.Round(exptCentroid);
-                        var key = (entry.ModificationName, entry.CentroidMass, roundedCentroid);
-                        if (!resultMap.TryGetValue(key, out var ar))
-                        {
-                            ar = new AnalysisResult
-                            {
-                                DatabaseEntry = entry,
-                                ExperimentalCentroid = exptCentroid
-                            };
-                            resultMap[key] = ar;
-                        }
-                        ar.IonCountsPerFile[fileName] = ionCount;
-                    }
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"ERROR — {ex.Message}");
-                }
-            }
-
-            // Fill zeros for files where a hit was not detected
-            analysisResults = resultMap.Values
-                .OrderBy(r => r.DatabaseEntry.ModificationName)
-                .ThenBy(r => r.ExperimentalCentroid)
-                .ToList();
-
-            foreach (var ar in analysisResults)
-                foreach (var fn in dmtFileNames)
-                    ar.IonCountsPerFile.TryAdd(fn, 0);
-
-            Console.WriteLine($"\n  {analysisResults.Count} hit(s) matched across all files.");
-        }
+        var (results, fileNames) = SpectrumBatch.AnalyzeFolder(
+            dmtFolder, proteoforms, matchTol, ionWindow, noiseThreshold);
+        analysisResults = results;
+        dmtFileNames    = fileNames;
     }
 }
 

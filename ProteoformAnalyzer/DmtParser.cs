@@ -3,14 +3,16 @@ using Microsoft.Data.Sqlite;
 namespace ProteoformAnalyzer;
 
 /// <summary>
-/// Reads ion neutral masses from a .dmt SQLite database.
+/// Reads individual ions (neutral mass + charge state) from a .dmt SQLite database.
 /// Neutral mass = (Mz * Charge) - (Charge * ProtonMass)
+/// In I2MS each row is one individually-measured ion, so the charge is real per-ion
+/// information rather than something inferred from an isotope envelope.
 /// </summary>
 public static class DmtParser
 {
     private const double ProtonMass = 1.007825; // Da (hydrogen atom mass)
 
-    public static IEnumerable<double> ReadMasses(string filePath)
+    public static IEnumerable<IonMeasurement> ReadIons(string filePath)
     {
         var connStr = new SqliteConnectionStringBuilder
         {
@@ -31,7 +33,8 @@ public static class DmtParser
         {
             double mz     = reader.GetDouble(0);
             double charge = reader.GetDouble(1);
-            yield return (mz * charge) - (charge * ProtonMass);
+            double mass   = (mz * charge) - (charge * ProtonMass);
+            yield return new IonMeasurement(mass, (int)Math.Round(charge));
         }
     }
 }

@@ -20,8 +20,12 @@ public static class CsvExporter
     }
 
     /// <summary>
-    /// Exports matched proteoforms with experimental centroids and per-file ion counts.
-    /// Columns: Modification Name | Predicted Mass (Da) | Experimental Centroid (Da) | [file1] | [file2] | ...
+    /// Exports matched proteoforms with experimental centroids, match-quality columns,
+    /// and per-file ion counts.
+    /// Columns: Protein | Modification Name | Alternative Name | Predicted Mass (Da) |
+    ///          Experimental Centroid (Da) | Mass Error (Da) | Charge States Observed |
+    ///          # Charge States | Match Rank | [file1] Ion Count | [file2] Ion Count | ...
+    /// The variable per-file ion-count columns stay last so the fixed columns are stable.
     /// Only proteoforms matched in at least one file are included.
     /// </summary>
     public static void ExportResults(
@@ -32,19 +36,24 @@ public static class CsvExporter
         using var w = new StreamWriter(path);
 
         // Header
-        var header = "Protein,Modification Name,Alternative Name,Predicted Centroid Mass (Da),Experimental Peak Centroid (Da)";
+        var header = "Protein,Modification Name,Alternative Name,Predicted Centroid Mass (Da),Experimental Peak Centroid (Da)," +
+                     "Mass Error (Da),Charge States Observed,# Charge States,Match Rank";
         foreach (var fn in fileNames)
             header += $",{Csv(fn)} Ion Count";
         w.WriteLine(header);
 
         foreach (var r in results)
         {
-            string protein = Csv(r.DatabaseEntry.ProteinLabel);
-            string name    = Csv(r.DatabaseEntry.ModificationName);
-            string altName = Csv(r.DatabaseEntry.AlternativeName);
-            string pred    = r.DatabaseEntry.CentroidMass.ToString("F4");
-            string expt    = r.ExperimentalCentroid.ToString("F4");
-            string row     = $"{protein},{name},{altName},{pred},{expt}";
+            string protein   = Csv(r.DatabaseEntry.ProteinLabel);
+            string name      = Csv(r.DatabaseEntry.ModificationName);
+            string altName   = Csv(r.DatabaseEntry.AlternativeName);
+            string pred      = r.DatabaseEntry.CentroidMass.ToString("F4");
+            string expt      = r.ExperimentalCentroid.ToString("F4");
+            string massErr   = r.MassErrorDa.ToString("F4");
+            string charges   = Csv(string.Join(";", r.ChargeStatesObserved));
+            string nCharges  = r.ChargeStatesObserved.Count.ToString();
+            string rank      = r.RankWithinPeak.ToString();
+            string row       = $"{protein},{name},{altName},{pred},{expt},{massErr},{charges},{nCharges},{rank}";
 
             foreach (var fn in fileNames)
             {

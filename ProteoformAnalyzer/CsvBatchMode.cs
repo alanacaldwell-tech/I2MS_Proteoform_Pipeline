@@ -115,7 +115,7 @@ public static class CsvBatchMode
                                                           proteinLabel: uniprotId,
                                                           maxOccupancyPerFamily: maxOccupancyPerFamily);
                 var combinedDb  = MergeWithContaminants(proteoforms, contaminantEntries);
-                var (results, fileNames) = AnalyzeIfProvided(combinedDb, dmtFolder, matchWindow, ionCountingWindow, minIonCount);
+                var (results, fileNames) = SpectrumBatch.AnalyzeFolder(dmtFolder, combinedDb, matchWindow, ionCountingWindow, minIonCount);
                 string outPath = ResolveOutputPath(proteinInput, customOutputPath, inputDir);
                 ExportSafe(combinedDb, results, fileNames, outPath);
                 success++;
@@ -129,7 +129,7 @@ public static class CsvBatchMode
                                                           tolerance: 5.0, proteinLabel: $"sequence_{i + 1}",
                                                           maxOccupancyPerFamily: maxOccupancyPerFamily);
                 var combinedDb  = MergeWithContaminants(proteoforms, contaminantEntries);
-                var (results, fileNames) = AnalyzeIfProvided(combinedDb, dmtFolder, matchWindow, ionCountingWindow, minIonCount);
+                var (results, fileNames) = SpectrumBatch.AnalyzeFolder(dmtFolder, combinedDb, matchWindow, ionCountingWindow, minIonCount);
                 string outPath = ResolveOutputPath($"sequence_{i + 1}", customOutputPath, inputDir);
                 ExportSafe(combinedDb, results, fileNames, outPath);
                 success++;
@@ -221,63 +221,6 @@ public static class CsvBatchMode
 
         string safe = string.Concat(proteinId.Select(c => Path.GetInvalidFileNameChars().Contains(c) ? '_' : c));
         return Path.Combine(inputDir, $"{safe}_proteoforms.csv");
-    }
-
-    private static (List<AnalysisResult> results, List<string> fileNames)
-        AnalyzeIfProvided(
-            List<ProteoformEntry> proteoforms,
-            string? dmtFolder,
-            double matchWindow,
-            double ionCountingWindow,
-            long minIonCount = 0)
-    {
-        var emptyFileNames = new List<string>();
-        if (string.IsNullOrEmpty(dmtFolder) || !Directory.Exists(dmtFolder))
-            return (new List<AnalysisResult>(), emptyFileNames);
-
-        var dmtFiles = Directory.GetFiles(dmtFolder, "*.dmt", SearchOption.TopDirectoryOnly)
-                                .OrderBy(f => f).ToArray();
-        if (dmtFiles.Length == 0)
-            return (new List<AnalysisResult>(), emptyFileNames);
-
-        var fileNames = dmtFiles.Select(Path.GetFileName).ToList()!;
-
-        // Key includes rounded experimental centroid so multiple peaks matching the
-        // same database entry are listed as separate rows.
-        var resultMap = new Dictionary<(string, double, long), AnalysisResult>();
-
-        foreach (var (filePath, fileName) in dmtFiles.Zip(fileNames))
-        {
-            try
-            {
-                var matches = SpectrumAnalyzer.ProcessFile(filePath, proteoforms, matchWindow, ionCountingWindow, minIonCount);
-                foreach (var (entry, centroid, count) in matches)
-                {
-                    long roundedCentroid = (long)Math.Round(centroid);
-                    var key = (entry.ModificationName, entry.CentroidMass, roundedCentroid);
-                    if (!resultMap.TryGetValue(key, out var ar))
-                    {
-                        ar = new AnalysisResult { DatabaseEntry = entry, ExperimentalCentroid = centroid };
-                        resultMap[key] = ar;
-                    }
-                    ar.IonCountsPerFile[fileName] = count;
-                }
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"  Warning: could not process {fileName} — {ex.Message}");
-            }
-        }
-
-        var results = resultMap.Values
-            .OrderBy(r => r.DatabaseEntry.ModificationName)
-            .ThenBy(r => r.ExperimentalCentroid)
-            .ToList();
-        foreach (var ar in results)
-            foreach (var fn in fileNames) ar.IonCountsPerFile.TryAdd(fn, 0);
-
-        Console.WriteLine($"  {results.Count} hit(s) matched across {fileNames.Count} file(s).");
-        return (results, fileNames);
     }
 
     private static void ExportSafe(
