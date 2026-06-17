@@ -73,6 +73,10 @@ public static class CsvBatchMode
 
         Console.WriteLine();
 
+        // A non-null contaminant list means the user opted to screen for contaminating proteins;
+        // unmatched peaks are only reported in that case.
+        bool includeUnmatched = contaminantIds != null;
+
         string inputDir = Path.GetDirectoryName(Path.GetFullPath(inputCsvPath))
                           ?? Directory.GetCurrentDirectory();
 
@@ -115,7 +119,7 @@ public static class CsvBatchMode
                                                           proteinLabel: uniprotId,
                                                           maxOccupancyPerFamily: maxOccupancyPerFamily);
                 var combinedDb  = MergeWithContaminants(proteoforms, contaminantEntries);
-                var (results, fileNames) = SpectrumBatch.AnalyzeFolder(dmtFolder, combinedDb, matchWindow, ionCountingWindow, minIonCount);
+                var (results, fileNames) = SpectrumBatch.AnalyzeFolder(dmtFolder, combinedDb, matchWindow, ionCountingWindow, minIonCount, includeUnmatched);
                 string outPath = ResolveOutputPath(proteinInput, customOutputPath, inputDir);
                 ExportSafe(combinedDb, results, fileNames, outPath);
                 success++;
@@ -129,7 +133,7 @@ public static class CsvBatchMode
                                                           tolerance: 5.0, proteinLabel: $"sequence_{i + 1}",
                                                           maxOccupancyPerFamily: maxOccupancyPerFamily);
                 var combinedDb  = MergeWithContaminants(proteoforms, contaminantEntries);
-                var (results, fileNames) = SpectrumBatch.AnalyzeFolder(dmtFolder, combinedDb, matchWindow, ionCountingWindow, minIonCount);
+                var (results, fileNames) = SpectrumBatch.AnalyzeFolder(dmtFolder, combinedDb, matchWindow, ionCountingWindow, minIonCount, includeUnmatched);
                 string outPath = ResolveOutputPath($"sequence_{i + 1}", customOutputPath, inputDir);
                 ExportSafe(combinedDb, results, fileNames, outPath);
                 success++;

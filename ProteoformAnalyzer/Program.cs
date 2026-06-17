@@ -238,7 +238,8 @@ Console.WriteLine($"Generated {proteoforms.Count} database entries.");
 // from each protein are distinguishable in the output.
 Console.WriteLine();
 Console.Write("Check for contaminating proteins? (y/n, default n): ");
-if ((Console.ReadLine()?.Trim().ToLower() ?? "n") == "y")
+bool searchContaminants = (Console.ReadLine()?.Trim().ToLower() ?? "n") == "y";
+if (searchContaminants)
 {
     var contUniProtClient = new UniProtClient(http);
     var contPrideClient   = new PrideClient(http);
@@ -306,8 +307,10 @@ if (!string.IsNullOrEmpty(dmtFolder))
             long.TryParse(noiseStr, out long nt) && nt > 0)
             noiseThreshold = nt;
 
+        // Unmatched peaks are only reported when the user is screening for contaminants.
         var (results, fileNames) = SpectrumBatch.AnalyzeFolder(
-            dmtFolder, proteoforms, matchTol, ionWindow, noiseThreshold);
+            dmtFolder, proteoforms, matchTol, ionWindow, noiseThreshold,
+            includeUnmatchedPeaks: searchContaminants);
         analysisResults = results;
         dmtFileNames    = fileNames;
     }

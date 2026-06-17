@@ -8,17 +8,30 @@ namespace ProteoformAnalyzer;
 /// </summary>
 public static class SpectrumBatch
 {
+    // Default minimum ion count for a row to be kept (used when 1% of the most abundant
+    // matched proteoform in a file is below this).
+    private const long MinAbundanceFloor = 100;
+
     /// <summary>
     /// Analyses every .dmt file in <paramref name="dmtFolder"/> against the database.
     /// Returns the merged hit rows and the ordered list of file names (one ion-count
     /// column per file). Returns empty lists when no folder/files are available.
+    ///
+    /// <para>A per-file abundance lower bound is applied: for each file the threshold is
+    /// max(<see cref="MinAbundanceFloor"/>, 1% of the most abundant matched proteoform's ion
+    /// count). A proteoform row is kept if it clears the threshold in at least one file, so a
+    /// hit that is weak in one file but strong in another is retained.</para>
+    ///
+    /// <para>When <paramref name="includeUnmatchedPeaks"/> is false (the user is not screening
+    /// for contaminating proteins), peaks that match no database proteoform are omitted.</para>
     /// </summary>
     public static (List<AnalysisResult> Results, List<string> FileNames) AnalyzeFolder(
         string? dmtFolder,
         List<ProteoformEntry> database,
         double matchWindow,
         double ionCountingWindow,
-        long minIonCount)
+        long minIonCount,
+        bool includeUnmatchedPeaks)
     {
         if (string.IsNullOrEmpty(dmtFolder) || !Directory.Exists(dmtFolder))
             return (new List<AnalysisResult>(), new List<string>());
@@ -36,6 +49,9 @@ public static class SpectrumBatch
         // are preserved per file (ExperimentalMassPerFile) and surfaced as trailing CSV columns.
         var resultMap = new Dictionary<(string, string, double), AnalysisResult>();
 
+        // Per-file abundance threshold: a row must clear its file's threshold in at least one file.
+        var fileThresholds = new Dictionary<string, long>();
+
         for (int f = 0; f < dmtFiles.Length; f++)
         {
             string fileName = fileNames[f];
@@ -43,9 +59,18 @@ public static class SpectrumBatch
             try
             {
                 var matches = SpectrumAnalyzer.ProcessFile(
-                    dmtFiles[f], database, matchWindow, ionCountingWindow, minIonCount);
+                    dmtFiles[f], database, matchWindow, ionCountingWindow, minIonCount, includeUnmatchedPeaks);
                 long totalIons = matches.Sum(m => m.IonCount);
-                Console.WriteLine($"{matches.Count} match(es), {totalIons:N0} ions");
+
+                // Abundance floor for this file: 1% of the most abundant matched proteoform's ion
+                // count, but never below MinAbundanceFloor.
+                long topMatchedIons = matches.Where(m => !m.IsUnmatchedPeak)
+                                             .Select(m => m.IonCount)
+                                             .DefaultIfEmpty(0L)
+                                             .Max();
+                long threshold = Math.Max(MinAbundanceFloor, (long)Math.Ceiling(0.01 * topMatchedIons));
+                fileThresholds[fileName] = threshold;
+                Console.WriteLine($"{matches.Count} match(es), {totalIons:N0} ions (keep ≥ {threshold} ions)");
 
                 foreach (var m in matches)
                 {
@@ -101,7 +126,13 @@ public static class SpectrumBatch
             ar.MassErrorDa = ar.DatabaseEntry.CentroidMass - ar.ExperimentalCentroid;
         }
 
+        // Apply the per-file abundance lower bound: keep a proteoform only if its ion count
+        // clears the threshold in at least one file (a row weak in one file but strong in
+        // another is retained). Uses the real per-file counts recorded above (before zero-fill).
         var results = resultMap.Values
+            .Where(ar => fileNames.Any(fn =>
+                fileThresholds.TryGetValue(fn, out long th) &&
+                ar.IonCountsPerFile.TryGetValue(fn, out long c) && c >= th))
             .OrderBy(r => r.DatabaseEntry.ModificationName)
             .ThenBy(r => r.ExperimentalCentroid)
             .ToList();
@@ -112,7 +143,7 @@ public static class SpectrumBatch
             foreach (var fn in fileNames)
                 ar.IonCountsPerFile.TryAdd(fn, 0);
 
-        Console.WriteLine($"  {results.Count} proteoform(s) matched across {fileNames.Count} file(s).");
+        Console.WriteLine($"  {results.Count} proteoform(s) retained across {fileNames.Count} file(s).");
         return (results, fileNames);
     }
 }

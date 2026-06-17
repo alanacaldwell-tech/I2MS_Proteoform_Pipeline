@@ -31,7 +31,8 @@ public static class SpectrumAnalyzer
             List<ProteoformEntry> database,
             double matchWindow = 2.0,
             double ionCountingWindow = 5.0,
-            long minIonCount = 0)
+            long minIonCount = 0,
+            bool includeUnmatchedPeaks = true)
     {
         // ── Step 1: read all ions and sort once by mass ───────────────────
         // Sorting once lets every downstream window query use binary search
@@ -88,24 +89,30 @@ public static class SpectrumAnalyzer
         var results = MatchAndCount(peaks, ions, sortedMasses, database, matchWindow, ionCountingWindow);
 
         // ── Step 7: report peaks that had no database match ───────────────
-        // Collect the rounded centroids of every matched peak so we can find the gaps.
-        var matchedCentroids = new HashSet<long>(results.Select(r => (long)Math.Round(r.ExperimentalCentroid)));
-        foreach (var peak in peaks)
+        // Only emitted when requested (i.e. when the user is screening for contaminating
+        // proteins); otherwise unmatched peaks are noise to the target analysis and omitted.
+        if (includeUnmatchedPeaks)
         {
-            if (matchedCentroids.Contains((long)Math.Round(peak.Centroid))) continue;
-            var (ionCount, charges) = CountWindow(
-                ions, sortedMasses, peak.Centroid - ionCountingWindow, peak.Centroid + ionCountingWindow);
-            results.Add(new SpectrumMatch(
-                new ProteoformEntry
-                {
-                    ModificationName = $"Unmatched peak ({peak.Centroid:F2} Da)",
-                    CentroidMass = peak.Centroid
-                },
-                peak.Centroid,
-                ionCount,
-                MassErrorDa: 0.0,
-                ChargeStates: charges,
-                RankWithinPeak: 1));
+            // Collect the rounded centroids of every matched peak so we can find the gaps.
+            var matchedCentroids = new HashSet<long>(results.Select(r => (long)Math.Round(r.ExperimentalCentroid)));
+            foreach (var peak in peaks)
+            {
+                if (matchedCentroids.Contains((long)Math.Round(peak.Centroid))) continue;
+                var (ionCount, charges) = CountWindow(
+                    ions, sortedMasses, peak.Centroid - ionCountingWindow, peak.Centroid + ionCountingWindow);
+                results.Add(new SpectrumMatch(
+                    new ProteoformEntry
+                    {
+                        ModificationName = $"Unmatched peak ({peak.Centroid:F2} Da)",
+                        CentroidMass = peak.Centroid
+                    },
+                    peak.Centroid,
+                    ionCount,
+                    MassErrorDa: 0.0,
+                    ChargeStates: charges,
+                    RankWithinPeak: 1,
+                    IsUnmatchedPeak: true));
+            }
         }
 
         // ── Step 8: noise floor filter ────────────────────────────────────
@@ -294,7 +301,8 @@ public static class SpectrumAnalyzer
                     ions, sortedMasses, entry.CentroidMass - window, entry.CentroidMass + window);
 
                 double massError = entry.CentroidMass - peak.Centroid;
-                candidates.Add(new SpectrumMatch(entry, peak.Centroid, ionCount, massError, charges, 0));
+                candidates.Add(new SpectrumMatch(
+                    entry, peak.Centroid, ionCount, massError, charges, RankWithinPeak: 0, IsUnmatchedPeak: false));
             }
 
             // Rank within this peak: more corroborating charge states is the stronger signal

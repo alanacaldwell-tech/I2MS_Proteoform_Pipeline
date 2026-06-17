@@ -22,7 +22,10 @@ public record SpectrumMatch(
     // ChargeStates: distinct charge states observed within the integration window (sorted).
     IReadOnlyList<int> ChargeStates,
     // RankWithinPeak: rank among all entries matching the same peak (1 = best).
-    int RankWithinPeak);
+    int RankWithinPeak,
+    // IsUnmatchedPeak: true for a peak that matched no database proteoform (a synthetic
+    // "Unmatched peak" row), false for a real database match.
+    bool IsUnmatchedPeak);
 
 /// <summary>
 /// One peak identified in a 1-Da binned mass spectrum.
