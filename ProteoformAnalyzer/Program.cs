@@ -80,19 +80,8 @@ if (modeInput == "2")
         }
     }
 
-    long batchNoiseThreshold = 0;
-    if (!string.IsNullOrEmpty(batchDmtFolder) && Directory.Exists(batchDmtFolder))
-    {
-        Console.Write("Optional minimum ion count floor — rows below this are dropped\n" +
-                      "  (press Enter for none; a per-file 0.5%-of-top / 100-ion threshold is always applied): ");
-        string? batchNoiseStr = Console.ReadLine()?.Trim();
-        if (!string.IsNullOrEmpty(batchNoiseStr) &&
-            long.TryParse(batchNoiseStr, out long bnt) && bnt > 0)
-            batchNoiseThreshold = bnt;
-    }
-
     Console.WriteLine();
-    await CsvBatchMode.RunAsync(batchCsvPath, http, batchTrunc, batchMatchTol, batchIonWindow, batchDmtFolder, batchContaminants, batchNoiseThreshold, batchMaxOccupancy);
+    await CsvBatchMode.RunAsync(batchCsvPath, http, batchTrunc, batchMatchTol, batchIonWindow, batchDmtFolder, batchContaminants, batchMaxOccupancy);
     return;
 }
 
@@ -274,7 +263,6 @@ string? dmtFolder = Console.ReadLine()?.Trim().Trim('"');
 
 double matchTol = 2.0;
 double ionWindow = 5.0;
-long noiseThreshold = 0; // 0 = no manual floor; the 0.5%/100-ion abundance threshold still applies
 List<string> dmtFileNames = new();
 List<AnalysisResult> analysisResults = new();
 
@@ -300,16 +288,9 @@ if (!string.IsNullOrEmpty(dmtFolder))
                 System.Globalization.CultureInfo.InvariantCulture, out double iw) && iw > 0)
             ionWindow = iw;
 
-        Console.Write("Optional minimum ion count floor — rows below this are dropped\n" +
-                      "  (press Enter for none; a per-file 0.5%-of-top / 100-ion threshold is always applied): ");
-        string? noiseStr = Console.ReadLine()?.Trim();
-        if (!string.IsNullOrEmpty(noiseStr) &&
-            long.TryParse(noiseStr, out long nt) && nt > 0)
-            noiseThreshold = nt;
-
         // Unmatched peaks are only reported when the user is screening for contaminants.
         var (results, fileNames) = SpectrumBatch.AnalyzeFolder(
-            dmtFolder, proteoforms, matchTol, ionWindow, noiseThreshold,
+            dmtFolder, proteoforms, matchTol, ionWindow,
             includeUnmatchedPeaks: searchContaminants);
         analysisResults = results;
         dmtFileNames    = fileNames;

@@ -30,7 +30,6 @@ public static class CsvBatchMode
         double ionCountingWindow = 5.0,
         string? dmtFolder = null,
         List<string>? contaminantIds = null,
-        long minIonCount = 0,
         int maxOccupancyPerFamily = 12)
     {
         // ── Parse input CSV ───────────────────────────────────────────────
@@ -119,7 +118,7 @@ public static class CsvBatchMode
                                                           proteinLabel: uniprotId,
                                                           maxOccupancyPerFamily: maxOccupancyPerFamily);
                 var combinedDb  = MergeWithContaminants(proteoforms, contaminantEntries);
-                var (results, fileNames) = SpectrumBatch.AnalyzeFolder(dmtFolder, combinedDb, matchWindow, ionCountingWindow, minIonCount, includeUnmatched);
+                var (results, fileNames) = SpectrumBatch.AnalyzeFolder(dmtFolder, combinedDb, matchWindow, ionCountingWindow, includeUnmatched);
                 string outPath = ResolveOutputPath(proteinInput, customOutputPath, inputDir);
                 ExportSafe(combinedDb, results, fileNames, outPath);
                 success++;
@@ -133,7 +132,7 @@ public static class CsvBatchMode
                                                           tolerance: 5.0, proteinLabel: $"sequence_{i + 1}",
                                                           maxOccupancyPerFamily: maxOccupancyPerFamily);
                 var combinedDb  = MergeWithContaminants(proteoforms, contaminantEntries);
-                var (results, fileNames) = SpectrumBatch.AnalyzeFolder(dmtFolder, combinedDb, matchWindow, ionCountingWindow, minIonCount, includeUnmatched);
+                var (results, fileNames) = SpectrumBatch.AnalyzeFolder(dmtFolder, combinedDb, matchWindow, ionCountingWindow, includeUnmatched);
                 string outPath = ResolveOutputPath($"sequence_{i + 1}", customOutputPath, inputDir);
                 ExportSafe(combinedDb, results, fileNames, outPath);
                 success++;
