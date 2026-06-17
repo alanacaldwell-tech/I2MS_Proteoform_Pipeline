@@ -8,7 +8,11 @@ namespace ProteoformAnalyzer;
 /// </summary>
 public static class SpectrumBatch
 {
-    // Default minimum ion count for a row to be kept (used when 1% of the most abundant
+    // Fraction of the most abundant matched proteoform's ion count used as the per-file
+    // abundance threshold.
+    private const double AbundanceFraction = 0.005;   // 0.5%
+
+    // Default minimum ion count for a row to be kept (used when 0.5% of the most abundant
     // matched proteoform in a file is below this).
     private const long MinAbundanceFloor = 100;
 
@@ -17,10 +21,13 @@ public static class SpectrumBatch
     /// Returns the merged hit rows and the ordered list of file names (one ion-count
     /// column per file). Returns empty lists when no folder/files are available.
     ///
-    /// <para>A per-file abundance lower bound is applied: for each file the threshold is
-    /// max(<see cref="MinAbundanceFloor"/>, 1% of the most abundant matched proteoform's ion
-    /// count). A proteoform row is kept if it clears the threshold in at least one file, so a
-    /// hit that is weak in one file but strong in another is retained.</para>
+    /// <para>This is the single abundance lower bound for the analysis (it replaces the old
+    /// per-file noise-floor detector). For each file the threshold is
+    /// max(<paramref name="minIonCount"/>, <see cref="MinAbundanceFloor"/>, 0.5% of the most
+    /// abundant matched proteoform's ion count). <paramref name="minIonCount"/> (0 = none) is an
+    /// optional absolute floor the user can raise. A proteoform row is kept if it clears the
+    /// threshold in at least one file, so a hit that is weak in one file but strong in another is
+    /// retained, and its actual per-file counts are preserved.</para>
     ///
     /// <para>When <paramref name="includeUnmatchedPeaks"/> is false (the user is not screening
     /// for contaminating proteins), peaks that match no database proteoform are omitted.</para>
@@ -59,16 +66,18 @@ public static class SpectrumBatch
             try
             {
                 var matches = SpectrumAnalyzer.ProcessFile(
-                    dmtFiles[f], database, matchWindow, ionCountingWindow, minIonCount, includeUnmatchedPeaks);
+                    dmtFiles[f], database, matchWindow, ionCountingWindow, includeUnmatchedPeaks);
                 long totalIons = matches.Sum(m => m.IonCount);
 
-                // Abundance floor for this file: 1% of the most abundant matched proteoform's ion
-                // count, but never below MinAbundanceFloor.
+                // Abundance floor for this file: 0.5% of the most abundant matched proteoform's ion
+                // count, but never below MinAbundanceFloor, and never below the user's manual floor.
                 long topMatchedIons = matches.Where(m => !m.IsUnmatchedPeak)
                                              .Select(m => m.IonCount)
                                              .DefaultIfEmpty(0L)
                                              .Max();
-                long threshold = Math.Max(MinAbundanceFloor, (long)Math.Ceiling(0.01 * topMatchedIons));
+                long threshold = Math.Max(
+                    Math.Max(minIonCount, MinAbundanceFloor),
+                    (long)Math.Ceiling(AbundanceFraction * topMatchedIons));
                 fileThresholds[fileName] = threshold;
                 Console.WriteLine($"{matches.Count} match(es), {totalIons:N0} ions (keep ≥ {threshold} ions)");
 

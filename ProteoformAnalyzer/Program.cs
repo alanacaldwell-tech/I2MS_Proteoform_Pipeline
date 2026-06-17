@@ -83,8 +83,8 @@ if (modeInput == "2")
     long batchNoiseThreshold = 0;
     if (!string.IsNullOrEmpty(batchDmtFolder) && Directory.Exists(batchDmtFolder))
     {
-        Console.Write("Minimum ion count threshold — peaks at or below this value are discarded as noise\n" +
-                      "  (press Enter to auto-estimate from the dataset; recommended ~15–25 for I2MS): ");
+        Console.Write("Optional minimum ion count floor — rows below this are dropped\n" +
+                      "  (press Enter for none; a per-file 0.5%-of-top / 100-ion threshold is always applied): ");
         string? batchNoiseStr = Console.ReadLine()?.Trim();
         if (!string.IsNullOrEmpty(batchNoiseStr) &&
             long.TryParse(batchNoiseStr, out long bnt) && bnt > 0)
@@ -274,7 +274,7 @@ string? dmtFolder = Console.ReadLine()?.Trim().Trim('"');
 
 double matchTol = 2.0;
 double ionWindow = 5.0;
-long noiseThreshold = 0; // 0 = auto-estimate from dataset
+long noiseThreshold = 0; // 0 = no manual floor; the 0.5%/100-ion abundance threshold still applies
 List<string> dmtFileNames = new();
 List<AnalysisResult> analysisResults = new();
 
@@ -300,8 +300,8 @@ if (!string.IsNullOrEmpty(dmtFolder))
                 System.Globalization.CultureInfo.InvariantCulture, out double iw) && iw > 0)
             ionWindow = iw;
 
-        Console.Write("Minimum ion count threshold — peaks at or below this value are discarded as noise\n" +
-                      "  (press Enter to auto-estimate from the dataset; recommended ~15–25 for I2MS): ");
+        Console.Write("Optional minimum ion count floor — rows below this are dropped\n" +
+                      "  (press Enter for none; a per-file 0.5%-of-top / 100-ion threshold is always applied): ");
         string? noiseStr = Console.ReadLine()?.Trim();
         if (!string.IsNullOrEmpty(noiseStr) &&
             long.TryParse(noiseStr, out long nt) && nt > 0)

@@ -31,7 +31,6 @@ public static class SpectrumAnalyzer
             List<ProteoformEntry> database,
             double matchWindow = 2.0,
             double ionCountingWindow = 5.0,
-            long minIonCount = 0,
             bool includeUnmatchedPeaks = true)
     {
         // ── Step 1: read all ions and sort once by mass ───────────────────
@@ -53,17 +52,6 @@ public static class SpectrumAnalyzer
             int bin = (int)Math.Floor(m);
             histogram[bin] = histogram.TryGetValue(bin, out long c) ? c + 1 : 1;
         }
-
-        // ── Step 2b: auto-estimate noise floor if no threshold supplied ───
-        // Scan the full mass range with non-overlapping windows of width
-        // 2*ionCountingWindow.  The 25th-percentile window ion count is used as
-        // a dataset-wide background estimate, which avoids the bias that a
-        // fixed local-flanking window introduces when two proteoforms are
-        // closely spaced (their flanking regions overlap each other's signal).
-        long noiseFloor = minIonCount > 0
-            ? minIonCount
-            : EstimateNoiseFloor(sortedMasses, ionCountingWindow);
-        Console.WriteLine($"  Noise floor: {noiseFloor} ions (peaks with ≤ {noiseFloor} ions will be discarded)");
 
         // ── Step 3 + 4: find local-maxima peaks and compute FWHM centroids ─
         var peaks = FindPeaks(histogram, sortedMasses);
@@ -115,63 +103,11 @@ public static class SpectrumAnalyzer
             }
         }
 
-        // ── Step 8: noise floor filter ────────────────────────────────────
-        // Filter is applied to the final ion counts (the same values written
-        // to the CSV) rather than to raw peaks, so the threshold is directly
-        // comparable to what the user sees in the output.
-        results = results.Where(r => r.IonCount > noiseFloor).ToList();
-
+        // No abundance filtering happens here: ProcessFile returns every matched peak with its
+        // faithful per-file ion count. The abundance lower bound is applied once, across all files,
+        // in SpectrumBatch.AnalyzeFolder so that per-file counts are preserved and a hit weak in one
+        // file but strong in another is retained.
         return results;
-    }
-
-    /// <summary>
-    /// Estimates the background noise floor from the full ion mass list.
-    /// Scans non-overlapping windows of width 2*windowHalfWidth across the
-    /// entire mass range, collects the ion count for each window that contains
-    /// at least one ion, then returns the 25th percentile of those non-empty
-    /// counts.  Most non-empty windows in a typical I2MS spectrum contain only
-    /// 1–10 scattered background ions; the 25th percentile sits comfortably in
-    /// that noise range while being insensitive to the handful of high-count
-    /// real-proteoform windows that would skew the median upward.
-    /// </summary>
-    public static long EstimateNoiseFloor(double[] sortedMasses, double windowHalfWidth)
-    {
-        if (sortedMasses.Length == 0) return 0;
-
-        double minMass = sortedMasses[0];
-        double maxMass = sortedMasses[^1];
-        double windowWidth = windowHalfWidth * 2.0;
-
-        double span = maxMass - minMass;
-        int numWindows = (int)(span / windowWidth);
-        // Too few windows to characterise a background — skip noise filtering entirely.
-        if (numWindows < 10) return 0;
-
-        // Two-pointer scan over the already-sorted masses for O(n) window counting.
-        var nonEmptyCounts = new List<long>();
-
-        int left = 0;
-        for (int w = 0; w < numWindows; w++)
-        {
-            double lo = minMass + w * windowWidth;
-            double hi = lo + windowWidth;
-
-            while (left < sortedMasses.Length && sortedMasses[left] < lo) left++;
-
-            int right = left;
-            while (right < sortedMasses.Length && sortedMasses[right] < hi) right++;
-
-            long count = right - left;
-            if (count > 0)
-                nonEmptyCounts.Add(count);
-        }
-
-        if (nonEmptyCounts.Count == 0) return 0;
-
-        // 25th percentile of non-empty window counts = noise floor, minimum 10.
-        nonEmptyCounts.Sort();
-        int p25index = (int)Math.Floor(nonEmptyCounts.Count * 0.25);
-        return Math.Max(10L, nonEmptyCounts[p25index]);
     }
 
     // ─────────────────────────────────────────────────────────────────────
