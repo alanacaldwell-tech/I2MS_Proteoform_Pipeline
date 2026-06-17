@@ -68,8 +68,9 @@ public static class SpectrumBatch
                 long totalIons = matches.Sum(m => m.IonCount);
 
                 // Abundance floor for this file: the larger of MinAbundanceFloor and 0.5% of the
-                // most abundant matched proteoform's ion count.
-                long topMatchedIons = matches.Where(m => !m.IsUnmatchedPeak)
+                // most abundant matched proteoform's ion count. Unmatched peaks and decoys do not
+                // count toward "most abundant matched proteoform".
+                long topMatchedIons = matches.Where(m => !m.IsUnmatchedPeak && !m.Entry.IsDecoy)
                                              .Select(m => m.IonCount)
                                              .DefaultIfEmpty(0L)
                                              .Max();

@@ -1,4 +1,3 @@
-using System.Net.Http.Json;
 using System.Text.Json.Serialization;
 
 namespace ProteoformAnalyzer;
@@ -26,10 +25,8 @@ public class PrideClient(HttpClient http)
                              $"?proteinAccession={Uri.EscapeDataString(uniprotAccession)}" +
                              $"&pageSize=100&page={page}";
 
-                var resp = await http.GetAsync(url);
-                if (!resp.IsSuccessStatusCode) break;
-
-                var payload = await resp.Content.ReadFromJsonAsync<PrideEvidenceResponse>();
+                var (payload, outcome) = await ResilientJson.GetAsync<PrideEvidenceResponse>(http, url, "PRIDE");
+                if (outcome is FetchOutcome.Failed or FetchOutcome.NotFound) break;
                 if (payload?.PeptideEvidenceList is null || payload.PeptideEvidenceList.Count == 0)
                     break;
 
@@ -71,6 +68,7 @@ public class PrideClient(HttpClient http)
             .ToList();
 
         Console.WriteLine($"  [PRIDE] Found {deduped.Count} unique PTM sites.");
+        RunManifest.Record($"PRIDE {uniprotAccession}: {deduped.Count} unique PTM sites");
         return deduped;
     }
 

@@ -35,6 +35,9 @@ if (modeInput == "2")
     Console.Write("Include N- and C-terminal truncations? (y/n, default y): ");
     bool batchTrunc = (Console.ReadLine()?.Trim().ToLower() ?? "y") != "n";
 
+    Console.Write("Estimate false-discovery rate with decoys? (y/n, default y): ");
+    bool batchEstimateFdr = (Console.ReadLine()?.Trim().ToLower() ?? "y") != "n";
+
     int batchMaxOccupancy = 12;
     Console.Write("Max simultaneous modifications per type (default 12): ");
     string? batchMaxOccStr = Console.ReadLine()?.Trim();
@@ -81,7 +84,7 @@ if (modeInput == "2")
     }
 
     Console.WriteLine();
-    await CsvBatchMode.RunAsync(batchCsvPath, http, batchTrunc, batchMatchTol, batchIonWindow, batchDmtFolder, batchContaminants, batchMaxOccupancy);
+    await CsvBatchMode.RunAsync(batchCsvPath, http, batchTrunc, batchMatchTol, batchIonWindow, batchDmtFolder, batchContaminants, batchMaxOccupancy, batchEstimateFdr);
     return;
 }
 
@@ -288,10 +291,37 @@ if (!string.IsNullOrEmpty(dmtFolder))
                 System.Globalization.CultureInfo.InvariantCulture, out double iw) && iw > 0)
             ionWindow = iw;
 
+        Console.Write("Estimate false-discovery rate with decoys? (y/n, default y): ");
+        bool estimateFdr = (Console.ReadLine()?.Trim().ToLower() ?? "y") != "n";
+
+        // Add decoy proteoforms so chance matches can be quantified (target–decoy FDR).
+        var searchDb = proteoforms;
+        if (estimateFdr)
+        {
+            var decoys = DecoyGenerator.Generate(proteoforms);
+            searchDb = proteoforms.Concat(decoys).ToList();
+            Console.WriteLine($"  Added {decoys.Count} decoy proteoforms for FDR estimation.");
+        }
+
+        RunManifest.RecordParam("matchTolerance", matchTol.ToString("F2"));
+        RunManifest.RecordParam("ionWindow", ionWindow.ToString("F2"));
+        RunManifest.RecordParam("truncations", includeTrunc.ToString());
+        RunManifest.RecordParam("maxOccupancyPerFamily", maxOccupancy.ToString());
+        RunManifest.RecordParam("estimateFdr", estimateFdr.ToString());
+
         // Unmatched peaks are only reported when the user is screening for contaminants.
         var (results, fileNames) = SpectrumBatch.AnalyzeFolder(
-            dmtFolder, proteoforms, matchTol, ionWindow,
+            dmtFolder, searchDb, matchTol, ionWindow,
             includeUnmatchedPeaks: searchContaminants);
+
+        if (estimateFdr)
+        {
+            var fdr = FdrEstimator.Estimate(results);
+            Console.WriteLine($"  {fdr.Describe()}");
+            RunManifest.Record($"FDR: {fdr.Describe()}");
+            results = results.Where(r => !r.DatabaseEntry.IsDecoy).ToList();
+        }
+
         analysisResults = results;
         dmtFileNames    = fileNames;
     }
@@ -325,6 +355,8 @@ while (true)
             CsvExporter.ExportDatabase(proteoforms, csvPath);
 
         Console.WriteLine($"Saved: {Path.GetFullPath(csvPath)}");
+        RunManifest.Write(csvPath);
+        Console.WriteLine($"Run manifest: {Path.GetFullPath(csvPath)}.manifest.txt");
         break;
     }
     catch (Exception ex)

@@ -1,4 +1,3 @@
-using System.Net.Http.Json;
 using System.Text.Json.Serialization;
 
 namespace ProteoformAnalyzer;
@@ -31,6 +30,7 @@ public class PtmExchangeClient(HttpClient http)
             .ToList();
 
         Console.WriteLine($"  [PTMeXchange/EBI] Found {deduped.Count} unique PTM sites.");
+        RunManifest.Record($"PTMeXchange/EBI {uniprotAccession}: {deduped.Count} unique PTM sites");
         return deduped;
     }
 
@@ -40,13 +40,9 @@ public class PtmExchangeClient(HttpClient http)
         var result = new List<PtmAnnotation>();
         try
         {
-            var resp = await http.GetAsync(
-                $"{ProteomicsPtmBase}/{Uri.EscapeDataString(accession)}");
-            if (!resp.IsSuccessStatusCode) return result;
-
-            var payload = await resp.Content
-                .ReadFromJsonAsync<List<EbiPtmEntry>>();
-            if (payload is null) return result;
+            string url = $"{ProteomicsPtmBase}/{Uri.EscapeDataString(accession)}";
+            var (payload, outcome) = await ResilientJson.GetAsync<List<EbiPtmEntry>>(http, url, "PTMeXchange");
+            if (outcome is FetchOutcome.Failed or FetchOutcome.NotFound || payload is null) return result;
 
             foreach (var entry in payload)
             {
@@ -84,12 +80,8 @@ public class PtmExchangeClient(HttpClient http)
             // Request only PTM/processing feature categories
             string url = $"{ProteinsBase}/{Uri.EscapeDataString(accession)}" +
                          "?categories=PTM_PROCESSING";
-            var resp = await http.GetAsync(url);
-            if (!resp.IsSuccessStatusCode) return result;
-
-            var payload = await resp.Content
-                .ReadFromJsonAsync<EbiProteinEntry>();
-            if (payload?.Features is null) return result;
+            var (payload, outcome) = await ResilientJson.GetAsync<EbiProteinEntry>(http, url, "EBI-Proteins");
+            if (outcome is FetchOutcome.Failed or FetchOutcome.NotFound || payload?.Features is null) return result;
 
             foreach (var feat in payload.Features)
             {

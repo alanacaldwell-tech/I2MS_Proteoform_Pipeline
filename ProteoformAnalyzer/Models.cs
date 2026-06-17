@@ -44,6 +44,9 @@ public class ProteoformEntry
     public double CentroidMass { get; set; }       // predicted centroid (Da)
     public double Tolerance { get; set; } = 5.0;   // kept for ProteoformBuilder; overridden by adaptive value at match time
     public IsotopeEnvelope? Envelope { get; set; }
+    /// <summary>True for a decoy entry used only to estimate the false-discovery rate;
+    /// decoys are matched alongside targets but excluded from the exported results.</summary>
+    public bool IsDecoy { get; set; }
 }
 
 /// <summary>Isotopic envelope summary from the distribution calculation.</summary>

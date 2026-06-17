@@ -1,0 +1,26 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, master, 'claude/**' ]
+  pull_request:
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Restore
+        run: dotnet restore ProteoformAnalyzer.Tests/ProteoformAnalyzer.Tests.csproj
+
+      - name: Build
+        run: dotnet build --no-restore -c Release ProteoformAnalyzer.Tests/ProteoformAnalyzer.Tests.csproj
+
+      - name: Test
+        run: dotnet test --no-build -c Release ProteoformAnalyzer.Tests/ProteoformAnalyzer.Tests.csproj --logger "console;verbosity=normal"

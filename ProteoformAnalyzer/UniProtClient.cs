@@ -1,5 +1,3 @@
-using System.Net.Http.Json;
-using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace ProteoformAnalyzer;
@@ -12,17 +10,11 @@ public class UniProtClient(HttpClient http)
     {
         Console.WriteLine($"  [UniProt] Querying {accession}...");
 
-        UniProtEntry entry;
-        try
+        string url = $"{Base}/{accession}?format=json";
+        var (entry, outcome) = await ResilientJson.GetAsync<UniProtEntry>(http, url, "UniProt");
+        if (entry is null || outcome is FetchOutcome.Failed or FetchOutcome.NotFound)
         {
-            var resp = await http.GetAsync($"{Base}/{accession}?format=json");
-            resp.EnsureSuccessStatusCode();
-            entry = await resp.Content.ReadFromJsonAsync<UniProtEntry>(JsonOpts.Default)
-                    ?? throw new Exception("Empty response");
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"  [UniProt] Error: {ex.Message}");
+            Console.WriteLine($"  [UniProt] Could not retrieve {accession} ({outcome}).");
             return ("", new List<PtmAnnotation>());
         }
 
@@ -58,6 +50,7 @@ public class UniProtClient(HttpClient http)
         }
 
         Console.WriteLine($"  [UniProt] Retrieved sequence ({seq.Length} aa), {ptms.Count} PTM annotations.");
+        RunManifest.Record($"UniProt {accession}: {seq.Length} aa, {ptms.Count} PTM annotations ({outcome})");
         return (seq, ptms);
     }
 
@@ -153,12 +146,4 @@ file class UniProtPosition
 {
     [JsonPropertyName("value")]
     public int Value { get; set; }
-}
-
-file static class JsonOpts
-{
-    public static readonly JsonSerializerOptions Default = new()
-    {
-        PropertyNameCaseInsensitive = true
-    };
 }

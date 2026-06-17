@@ -30,7 +30,8 @@ public static class CsvBatchMode
         double ionCountingWindow = 5.0,
         string? dmtFolder = null,
         List<string>? contaminantIds = null,
-        int maxOccupancyPerFamily = 12)
+        int maxOccupancyPerFamily = 12,
+        bool estimateFdr = true)
     {
         // ── Parse input CSV ───────────────────────────────────────────────
         var rows = ReadInputCsv(inputCsvPath);
@@ -76,6 +77,13 @@ public static class CsvBatchMode
         // unmatched peaks are only reported in that case.
         bool includeUnmatched = contaminantIds != null;
 
+        RunManifest.RecordParam("mode", "batch");
+        RunManifest.RecordParam("matchTolerance", matchWindow.ToString("F2"));
+        RunManifest.RecordParam("ionWindow", ionCountingWindow.ToString("F2"));
+        RunManifest.RecordParam("truncations", includeTruncations.ToString());
+        RunManifest.RecordParam("maxOccupancyPerFamily", maxOccupancyPerFamily.ToString());
+        RunManifest.RecordParam("estimateFdr", estimateFdr.ToString());
+
         string inputDir = Path.GetDirectoryName(Path.GetFullPath(inputCsvPath))
                           ?? Directory.GetCurrentDirectory();
 
@@ -118,7 +126,7 @@ public static class CsvBatchMode
                                                           proteinLabel: uniprotId,
                                                           maxOccupancyPerFamily: maxOccupancyPerFamily);
                 var combinedDb  = MergeWithContaminants(proteoforms, contaminantEntries);
-                var (results, fileNames) = SpectrumBatch.AnalyzeFolder(dmtFolder, combinedDb, matchWindow, ionCountingWindow, includeUnmatched);
+                var (results, fileNames) = AnalyzeWithFdr(combinedDb, dmtFolder, matchWindow, ionCountingWindow, includeUnmatched, estimateFdr);
                 string outPath = ResolveOutputPath(proteinInput, customOutputPath, inputDir);
                 ExportSafe(combinedDb, results, fileNames, outPath);
                 success++;
@@ -132,7 +140,7 @@ public static class CsvBatchMode
                                                           tolerance: 5.0, proteinLabel: $"sequence_{i + 1}",
                                                           maxOccupancyPerFamily: maxOccupancyPerFamily);
                 var combinedDb  = MergeWithContaminants(proteoforms, contaminantEntries);
-                var (results, fileNames) = SpectrumBatch.AnalyzeFolder(dmtFolder, combinedDb, matchWindow, ionCountingWindow, includeUnmatched);
+                var (results, fileNames) = AnalyzeWithFdr(combinedDb, dmtFolder, matchWindow, ionCountingWindow, includeUnmatched, estimateFdr);
                 string outPath = ResolveOutputPath($"sequence_{i + 1}", customOutputPath, inputDir);
                 ExportSafe(combinedDb, results, fileNames, outPath);
                 success++;
@@ -147,6 +155,39 @@ public static class CsvBatchMode
         }
 
         Console.WriteLine($"Batch complete: {success} succeeded, {failed} skipped.");
+        RunManifest.Write(inputCsvPath);
+        Console.WriteLine($"Run manifest: {Path.GetFullPath(inputCsvPath)}.manifest.txt");
+    }
+
+    // ── Analysis + FDR ────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Runs the folder analysis, optionally adding decoys to estimate the false-discovery
+    /// rate, then strips decoy rows from the returned results.
+    /// </summary>
+    private static (List<AnalysisResult> Results, List<string> FileNames) AnalyzeWithFdr(
+        List<ProteoformEntry> targets, string? dmtFolder, double matchWindow,
+        double ionCountingWindow, bool includeUnmatched, bool estimateFdr)
+    {
+        var searchDb = targets;
+        if (estimateFdr)
+        {
+            var decoys = DecoyGenerator.Generate(targets);
+            searchDb = targets.Concat(decoys).ToList();
+        }
+
+        var (results, fileNames) = SpectrumBatch.AnalyzeFolder(
+            dmtFolder, searchDb, matchWindow, ionCountingWindow, includeUnmatched);
+
+        if (estimateFdr)
+        {
+            var fdr = FdrEstimator.Estimate(results);
+            Console.WriteLine($"  {fdr.Describe()}");
+            RunManifest.Record($"FDR ({targets.FirstOrDefault()?.ProteinLabel}): {fdr.Describe()}");
+            results = results.Where(r => !r.DatabaseEntry.IsDecoy).ToList();
+        }
+
+        return (results, fileNames);
     }
 
     // ── Database merging ──────────────────────────────────────────────────
