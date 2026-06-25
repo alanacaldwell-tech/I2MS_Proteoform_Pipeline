@@ -9,13 +9,15 @@ public static class CsvExporter
     public static void ExportDatabase(List<ProteoformEntry> entries, string path)
     {
         using var w = new StreamWriter(path);
-        w.WriteLine("Protein,Modification Name,Alternative Name,Predicted Centroid Mass (Da),Tolerance Range,Envelope Sigma (Da)");
+        w.WriteLine("Protein,Modification Name,Alternative Name,Predicted Centroid Mass (Da),Tolerance Range,Envelope Sigma (Da)," +
+                    "Protein Disease Involvement,PTM Sites at Variants");
 
         foreach (var e in entries)
         {
             w.WriteLine($"{Csv(e.ProteinLabel)},{Csv(e.ModificationName)},{Csv(e.AlternativeName)}," +
                         $"{e.CentroidMass:F4},+/- {e.Tolerance:F1} Da," +
-                        $"{(e.Envelope is not null ? e.Envelope.Sigma.ToString("F3") : "")}");
+                        $"{(e.Envelope is not null ? e.Envelope.Sigma.ToString("F3") : "")}," +
+                        $"{Csv(string.Join("; ", e.ProteinDiseaseInvolvement))},{Csv(string.Join("; ", e.PtmVariantSites))}");
         }
     }
 
@@ -41,7 +43,8 @@ public static class CsvExporter
 
         // Header — fixed columns, then per-file ion counts, then per-file experimental masses.
         var header = "Protein,Modification Name,Alternative Name,Predicted Centroid Mass (Da),Mean Experimental Mass (Da)," +
-                     "Mass Error (Da),Charge States Observed,# Charge States,Match Rank";
+                     "Mass Error (Da),Charge States Observed,# Charge States,Match Rank," +
+                     "Protein Disease Involvement,PTM Sites at Variants";
         foreach (var fn in fileNames)
             header += $",{Csv(fn)} Ion Count";
         foreach (var fn in fileNames)
@@ -59,7 +62,9 @@ public static class CsvExporter
             string charges   = Csv(string.Join(";", r.ChargeStatesObserved));
             string nCharges  = r.ChargeStatesObserved.Count.ToString();
             string rank      = r.RankWithinPeak.ToString();
-            string row       = $"{protein},{name},{altName},{pred},{expt},{massErr},{charges},{nCharges},{rank}";
+            string disease   = Csv(string.Join("; ", r.DatabaseEntry.ProteinDiseaseInvolvement));
+            string variants  = Csv(string.Join("; ", r.DatabaseEntry.PtmVariantSites));
+            string row       = $"{protein},{name},{altName},{pred},{expt},{massErr},{charges},{nCharges},{rank},{disease},{variants}";
 
             // Per-file ion counts (0 where undetected)
             foreach (var fn in fileNames)

@@ -66,6 +66,10 @@ public static class CsvBatchMode
                 var cEntries = ProteoformBuilder.Build(cSeq, cPtms, includeTruncations, tolerance: 5.0,
                                                        proteinLabel: cId,
                                                        maxOccupancyPerFamily: maxOccupancyPerFamily);
+
+                var cDisease = await cUniProt.FetchDiseaseAsync(cId);
+                DiseaseAnnotator.Apply(cEntries, cDisease, DiseaseAnnotator.Annotate(cPtms, cDisease));
+
                 contaminantEntries.AddRange(cEntries);
                 Console.WriteLine($"done ({cEntries.Count} entries).");
             }
@@ -125,6 +129,12 @@ public static class CsvBatchMode
                 var proteoforms = ProteoformBuilder.Build(sequence, allPtms, includeTruncations, tolerance: 5.0,
                                                           proteinLabel: uniprotId,
                                                           maxOccupancyPerFamily: maxOccupancyPerFamily);
+
+                // Disease/variant context (reuses the cached UniProt JSON).
+                var disease = await uniprotClient.FetchDiseaseAsync(uniprotId);
+                var diseaseNotes = DiseaseAnnotator.Annotate(allPtms, disease);
+                DiseaseAnnotator.Apply(proteoforms, disease, diseaseNotes);
+
                 var combinedDb  = MergeWithContaminants(proteoforms, contaminantEntries);
                 var (results, fileNames) = AnalyzeWithFdr(combinedDb, dmtFolder, matchWindow, ionCountingWindow, includeUnmatched, estimateFdr);
                 string outPath = ResolveOutputPath(proteinInput, customOutputPath, inputDir);

@@ -28,6 +28,9 @@ public class PtmAnnotation
     public char? Residue { get; set; }
     public double MassDelta { get; set; }
     public string Source { get; set; } = "";
+    /// <summary>Disease/variant context attached to this site (e.g. a UniProt sequence variant
+    /// that colocalizes with this PTM position). Empty when no disease association is known.</summary>
+    public List<string> DiseaseAssociations { get; set; } = new();
 }
 
 /// <summary>One entry in the proteoform database (predicted proteoform).</summary>
@@ -47,6 +50,13 @@ public class ProteoformEntry
     /// <summary>True for a decoy entry used only to estimate the false-discovery rate;
     /// decoys are matched alongside targets but excluded from the exported results.</summary>
     public bool IsDecoy { get; set; }
+    /// <summary>Diseases the source protein is implicated in (UniProt DISEASE annotations).
+    /// Protein-level context, identical for every proteoform of the same protein.</summary>
+    public List<string> ProteinDiseaseInvolvement { get; set; } = new();
+    /// <summary>PTM sites of the source protein that colocalize with an annotated sequence
+    /// variant ("PTM-disrupting variant" candidates). Protein-scoped; NOT a claim that this
+    /// specific proteoform occupies those sites.</summary>
+    public List<string> PtmVariantSites { get; set; } = new();
 }
 
 /// <summary>Isotopic envelope summary from the distribution calculation.</summary>
