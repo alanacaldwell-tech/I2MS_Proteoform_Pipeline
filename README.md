@@ -32,13 +32,22 @@ CI (`.github/workflows/ci.yml`) builds and runs the test suite on every push and
 ## Disease context
 
 When a UniProt accession is used, each proteoform is annotated (free, from the same
-cached UniProt record) with two honestly-scoped columns:
+cached UniProt record) with three honestly-scoped columns:
 
 - **Protein Disease Involvement** — diseases the protein is implicated in (UniProt
-  DISEASE annotations).
-- **PTM Sites at Variants** — PTM sites that colocalize with an annotated sequence
-  variant (candidate "PTM-disrupting variant" sites).
+  DISEASE annotations). Protein-level context, identical for every proteoform of a protein.
+- **Disease-Relevant Proteoform** — `Yes` when *this specific proteoform* carries a
+  modification at a disease-associated sequence variant (and still spans that residue),
+  blank otherwise. This is proteoform-specific: the unmodified form, or a form modified
+  only at other positions, is not flagged, and a variant site removed by a truncation is
+  dropped. Filter the CSV on this column to isolate the disease-relevant proteoforms.
+- **PTM Sites at Variants** — the specific variant-colocalized PTM site(s) the proteoform
+  carries (candidate "PTM-disrupting variant" sites).
 
 These surface disease *context* for prioritisation; they do not classify a proteoform as
-pathological. True disease-vs-healthy discrimination requires site-level curated data
-(e.g. PhosphoSitePlus) and/or case-vs-control quantitation of the ion counts.
+pathological. The proteoform-level flag is a *composition* claim (this form carries a
+modification family that has a variant-colocalized site), not an *abundance* claim — it
+does not assert the proteoform is upregulated in or unique to disease. Establishing that
+requires case-vs-control quantitation of the per-file ion counts (label your `.dmt`
+samples by condition), and true site-level classification requires curated data
+(e.g. PhosphoSitePlus).

@@ -123,7 +123,7 @@ while (true)
 // ── 2. Fetch from UniProt / databases if accession was given ──────────────
 var allPtms = new List<PtmAnnotation>();
 DiseaseInfo diseaseInfo = new();
-List<string> diseaseSiteNotes = new();
+List<DiseaseAnnotator.VariantColocalizedSite> diseaseSites = new();
 
 if (uniprotId is not null)
 {
@@ -149,10 +149,10 @@ if (uniprotId is not null)
 
     // Disease/variant context (reuses the cached UniProt JSON — no extra network call).
     diseaseInfo = await uniprotClient.FetchDiseaseAsync(uniprotId);
-    diseaseSiteNotes = DiseaseAnnotator.Annotate(allPtms, diseaseInfo);
+    diseaseSites = DiseaseAnnotator.ColocalizedSites(allPtms, diseaseInfo);
     if (!diseaseInfo.IsEmpty)
         Console.WriteLine($"  [Disease] {diseaseInfo.ProteinDiseases.Count} protein disease link(s), " +
-                          $"{diseaseSiteNotes.Count} variant-colocalized PTM site(s).");
+                          $"{diseaseSites.Select(s => s.Note).Distinct().Count()} variant-colocalized PTM site(s).");
 }
 else
 {
@@ -233,8 +233,9 @@ var proteoforms = ProteoformBuilder.Build(sequence, allPtms, includeTrunc, toler
                                          maxOccupancyPerFamily: maxOccupancy);
 Console.WriteLine($"Generated {proteoforms.Count} database entries.");
 
-// Attach protein-level disease involvement and variant-colocalized PTM sites to every entry.
-DiseaseAnnotator.Apply(proteoforms, diseaseInfo, diseaseSiteNotes);
+// Attach protein-level disease involvement (shared context) and the variant-colocalized PTM sites
+// that each specific proteoform actually carries.
+DiseaseAnnotator.Apply(proteoforms, diseaseInfo, diseaseSites);
 
 // ── 6b. Contaminant proteins ──────────────────────────────────────────────
 // If the user wants to check for contaminating proteins, fetch their databases
@@ -268,8 +269,7 @@ if (searchContaminants)
                                                    maxOccupancyPerFamily: maxOccupancy);
 
         var contDisease = await contUniProtClient.FetchDiseaseAsync(contId);
-        var contDiseaseNotes = DiseaseAnnotator.Annotate(contAllPtms, contDisease);
-        DiseaseAnnotator.Apply(contEntries, contDisease, contDiseaseNotes);
+        DiseaseAnnotator.Apply(contEntries, contDisease, DiseaseAnnotator.ColocalizedSites(contAllPtms, contDisease));
 
         proteoforms.AddRange(contEntries);
         Console.WriteLine($"done — {contEntries.Count} entries added ({contAllPtms.Count} PTM annotations).");

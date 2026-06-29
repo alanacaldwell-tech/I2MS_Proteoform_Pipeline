@@ -51,7 +51,8 @@ public static class ProteoformBuilder
                 ModificationName = FormatCombinationName(combo),
                 CentroidMass = envelope.Centroid,
                 Tolerance = tolerance,
-                Envelope = envelope
+                Envelope = envelope,
+                PtmFamilies = combo.Select(kv => kv.Family.FamilyKey).ToHashSet()
             });
         }
 
@@ -67,6 +68,11 @@ public static class ProteoformBuilder
 
             foreach (var trunc in truncations)
             {
+                // Surviving residue range (original 1-based numbering): N-terminal truncations drop
+                // the first ResiduesToRemove residues; C-terminal truncations drop the last ones.
+                int truncStart = trunc.IsNTerminal ? trunc.ResiduesToRemove + 1 : 1;
+                int truncEnd   = trunc.IsNTerminal ? sequence.Length : sequence.Length - trunc.ResiduesToRemove;
+
                 // 5a. Truncation alone
                 var truncEnvelope = IsotopeCalculator.Compute(trunc.Formula);
                 entries.Add(new ProteoformEntry
@@ -74,7 +80,9 @@ public static class ProteoformBuilder
                     ModificationName = trunc.Name,
                     CentroidMass = truncEnvelope.Centroid,
                     Tolerance = tolerance,
-                    Envelope = truncEnvelope
+                    Envelope = truncEnvelope,
+                    StartResidue = truncStart,
+                    EndResidue = truncEnd
                 });
 
                 // Only PTMs annotated at positions that still exist in the truncated
@@ -94,7 +102,11 @@ public static class ProteoformBuilder
                     foreach (var entry in MakeSingleFamilyEntries(
                         family, trunc.Formula, tolerance, prefix: trunc.Name,
                         maxOccupancy: maxOccupancyPerFamily))
+                    {
+                        entry.StartResidue = truncStart;
+                        entry.EndResidue = truncEnd;
                         entries.Add(entry);
+                    }
 
                 // 5c. Truncation + cross-family PTM combinations
                 foreach (var combo in CrossFamilyCombinations(truncFamilies, MaxCombinationDepth, maxOccupancyPerFamily))
@@ -106,16 +118,21 @@ public static class ProteoformBuilder
                         ModificationName = $"{trunc.Name} + {FormatCombinationName(combo)}",
                         CentroidMass = envelope.Centroid,
                         Tolerance = tolerance,
-                        Envelope = envelope
+                        Envelope = envelope,
+                        PtmFamilies = combo.Select(kv => kv.Family.FamilyKey).ToHashSet(),
+                        StartResidue = truncStart,
+                        EndResidue = truncEnd
                     });
                 }
             }
         }
 
-        // Post-processing: set ProteinLabel and compute AlternativeName for every entry
+        // Post-processing: set ProteinLabel, residue range (full length unless a truncation set it),
+        // and compute AlternativeName for every entry.
         foreach (var e in entries)
         {
             e.ProteinLabel = proteinLabel;
+            if (e.EndResidue == 0) e.EndResidue = sequence.Length;  // full-length default
             e.AlternativeName = ComputeAlternativeName(e.ModificationName, sequence.Length);
         }
         return entries;
@@ -341,7 +358,8 @@ public static class ProteoformBuilder
                 ModificationName = prefix is null ? modName : $"{prefix} + {modName}",
                 CentroidMass = envelope.Centroid,
                 Tolerance = tolerance,
-                Envelope = envelope
+                Envelope = envelope,
+                PtmFamilies = new HashSet<string> { family.FamilyKey }
             };
         }
     }

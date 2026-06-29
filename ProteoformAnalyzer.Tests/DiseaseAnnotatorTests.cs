@@ -45,23 +45,63 @@ public class DiseaseAnnotatorTests
     }
 
     [Fact]
-    public void Apply_CopiesProteinAndSiteContextToEveryEntry()
+    public void Apply_AttachesVariantSiteOnlyToProteoformsCarryingThatPtmFamily()
     {
-        var disease = SampleDisease();
-        var notes = new List<string> { "S5 Phosphoserine @ variant: in PARK1" };
-        var entries = new List<ProteoformEntry>
+        var disease = SampleDisease();   // disease variant at position 5
+        var ptms = new List<PtmAnnotation>
         {
-            new() { ModificationName = "Unmodified (intact)" },
-            new() { ModificationName = "Mono-Phospho" },
+            new() { ModificationName = "Phosphoserine", Position = 5, Residue = 'S' },
+        };
+        var sites = DiseaseAnnotator.ColocalizedSites(ptms, disease);
+
+        var phospho = new ProteoformEntry
+        {
+            ModificationName = "Mono-Phospho",
+            PtmFamilies = new() { "phosphorylation" }, StartResidue = 1, EndResidue = 100
+        };
+        var acetyl = new ProteoformEntry
+        {
+            ModificationName = "Acetylation",
+            PtmFamilies = new() { "acetylation" }, StartResidue = 1, EndResidue = 100
+        };
+        var intact = new ProteoformEntry
+        {
+            ModificationName = "Unmodified (intact)", StartResidue = 1, EndResidue = 100
         };
 
-        DiseaseAnnotator.Apply(entries, disease, notes);
+        var entries = new[] { phospho, acetyl, intact };
+        DiseaseAnnotator.Apply(entries, disease, sites);
 
-        Assert.All(entries, e =>
+        // Only the phospho proteoform carries the variant-colocalized phospho site.
+        Assert.Single(phospho.PtmVariantSites);
+        Assert.Contains("S5", phospho.PtmVariantSites[0]);
+        Assert.Empty(acetyl.PtmVariantSites);   // carries a different modification family
+        Assert.Empty(intact.PtmVariantSites);   // carries no modification
+
+        // Protein-level disease involvement is shared context on every proteoform.
+        Assert.All(entries, e => Assert.Equal(disease.ProteinDiseases, e.ProteinDiseaseInvolvement));
+    }
+
+    [Fact]
+    public void Apply_DropsVariantSiteRemovedByTruncation()
+    {
+        var disease = SampleDisease();   // disease variant at position 5
+        var ptms = new List<PtmAnnotation>
         {
-            Assert.Equal(disease.ProteinDiseases, e.ProteinDiseaseInvolvement);
-            Assert.Equal(notes, e.PtmVariantSites);
-        });
+            new() { ModificationName = "Phosphoserine", Position = 5, Residue = 'S' },
+        };
+        var sites = DiseaseAnnotator.ColocalizedSites(ptms, disease);
+
+        // An N-terminal truncation starting at residue 11 no longer spans position 5.
+        var truncated = new ProteoformEntry
+        {
+            ModificationName = "11-100 + Mono-Phospho",
+            PtmFamilies = new() { "phosphorylation" }, StartResidue = 11, EndResidue = 100
+        };
+
+        DiseaseAnnotator.Apply(new[] { truncated }, disease, sites);
+
+        Assert.Empty(truncated.PtmVariantSites);
     }
 
     [Fact]

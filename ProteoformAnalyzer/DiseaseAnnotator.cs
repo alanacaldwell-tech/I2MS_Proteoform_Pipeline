@@ -12,15 +12,23 @@ namespace ProteoformAnalyzer;
 /// </summary>
 public static class DiseaseAnnotator
 {
-    // Cap the per-protein variant-site note list so the CSV cell stays readable.
+    // Cap the per-proteoform variant-site note list so the CSV cell stays readable.
     private const int MaxSiteNotes = 25;
 
     /// <summary>
-    /// Marks PTM sites that colocalize with a sequence variant (adding the variant description to
-    /// <see cref="PtmAnnotation.DiseaseAssociations"/>) and returns human-readable site notes,
-    /// e.g. "S129 Phosphoserine @ variant: in PARK1; ...".
+    /// One PTM site whose position colocalizes with an annotated disease sequence variant. Carries
+    /// the modification <see cref="FamilyKey"/> (so we can tell which proteoforms could host it) and
+    /// the original 1-based <see cref="Position"/> (so we can drop it from truncated proteoforms that
+    /// no longer span the site), plus a human-readable <see cref="Note"/>.
     /// </summary>
-    public static List<string> Annotate(List<PtmAnnotation> ptms, DiseaseInfo disease)
+    public record VariantColocalizedSite(string FamilyKey, int Position, string Note);
+
+    /// <summary>
+    /// Finds every PTM whose position colocalizes with a disease sequence variant, marks the PTM
+    /// (adding the variant description to <see cref="PtmAnnotation.DiseaseAssociations"/>) and returns
+    /// the colocalized sites with the metadata needed to attach them to the right proteoforms.
+    /// </summary>
+    public static List<VariantColocalizedSite> ColocalizedSites(List<PtmAnnotation> ptms, DiseaseInfo disease)
     {
         if (disease.VariantSites.Count == 0) return new();
 
@@ -29,7 +37,7 @@ public static class DiseaseAnnotator
             .GroupBy(v => v.Position)
             .ToDictionary(g => g.Key, g => g.Select(v => v.Description).Distinct().ToList());
 
-        var notes = new List<string>();
+        var sites = new List<VariantColocalizedSite>();
         foreach (var p in ptms)
         {
             if (p.Position <= 0 || !variantsByPosition.TryGetValue(p.Position, out var descriptions))
@@ -37,25 +45,46 @@ public static class DiseaseAnnotator
 
             p.DiseaseAssociations.AddRange(descriptions);
             string residue = p.Residue?.ToString() ?? "";
-            notes.Add($"{residue}{p.Position} {p.ModificationName} @ variant: {string.Join(" | ", descriptions)}");
+            string note = $"{residue}{p.Position} {p.ModificationName} @ variant: {string.Join(" | ", descriptions)}";
+            sites.Add(new VariantColocalizedSite(ProteoformBuilder.ModFamily(p.ModificationName), p.Position, note));
         }
-
-        notes = notes.Distinct().ToList();
-        if (notes.Count > MaxSiteNotes)
-        {
-            int extra = notes.Count - MaxSiteNotes;
-            notes = notes.Take(MaxSiteNotes).Append($"(+{extra} more variant-colocalized site(s))").ToList();
-        }
-        return notes;
+        return sites;
     }
 
-    /// <summary>Copies the protein-level disease list and site notes onto every proteoform entry.</summary>
-    public static void Apply(IEnumerable<ProteoformEntry> entries, DiseaseInfo disease, List<string> siteNotes)
+    /// <summary>
+    /// Protein-wide variant-colocalized site notes (deduplicated, capped). Convenience for console
+    /// summaries; per-proteoform attribution is done by <see cref="Apply"/>.
+    /// </summary>
+    public static List<string> Annotate(List<PtmAnnotation> ptms, DiseaseInfo disease) =>
+        Cap(ColocalizedSites(ptms, disease).Select(s => s.Note).Distinct().ToList());
+
+    /// <summary>
+    /// Attaches disease context to each proteoform. The protein-level disease list is shared context
+    /// (the same for every proteoform of a protein), but the variant-colocalized PTM sites are made
+    /// proteoform-specific: a site is attached to a proteoform only when that proteoform actually
+    /// carries the site's modification family AND still spans the site's residue. So the unmodified
+    /// form, or a form modified only at other positions, carries no variant sites and is not flagged
+    /// as a disease-relevant proteoform.
+    /// </summary>
+    public static void Apply(
+        IEnumerable<ProteoformEntry> entries, DiseaseInfo disease, IReadOnlyList<VariantColocalizedSite> sites)
     {
         foreach (var e in entries)
         {
             e.ProteinDiseaseInvolvement = disease.ProteinDiseases;
-            e.PtmVariantSites = siteNotes;
+            e.PtmVariantSites = Cap(sites
+                .Where(s => e.PtmFamilies.Contains(s.FamilyKey)
+                         && s.Position >= e.StartResidue && s.Position <= e.EndResidue)
+                .Select(s => s.Note)
+                .Distinct()
+                .ToList());
         }
+    }
+
+    private static List<string> Cap(List<string> notes)
+    {
+        if (notes.Count <= MaxSiteNotes) return notes;
+        int extra = notes.Count - MaxSiteNotes;
+        return notes.Take(MaxSiteNotes).Append($"(+{extra} more variant-colocalized site(s))").ToList();
     }
 }

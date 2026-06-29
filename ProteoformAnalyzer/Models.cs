@@ -53,10 +53,25 @@ public class ProteoformEntry
     /// <summary>Diseases the source protein is implicated in (UniProt DISEASE annotations).
     /// Protein-level context, identical for every proteoform of the same protein.</summary>
     public List<string> ProteinDiseaseInvolvement { get; set; } = new();
-    /// <summary>PTM sites of the source protein that colocalize with an annotated sequence
-    /// variant ("PTM-disrupting variant" candidates). Protein-scoped; NOT a claim that this
-    /// specific proteoform occupies those sites.</summary>
+    /// <summary>Variant-colocalized PTM sites that THIS proteoform can actually carry — i.e. sites
+    /// whose modification family is present in this proteoform and whose position survives in this
+    /// proteoform's residue range. Empty for proteoforms that do not carry a disease-variant-
+    /// colocalized modification (e.g. the unmodified form, or a form modified only elsewhere).</summary>
     public List<string> PtmVariantSites { get; set; } = new();
+
+    /// <summary>Modification families this proteoform carries (e.g. "phosphorylation"), keyed the
+    /// same way as <see cref="ProteoformBuilder.ModFamily"/>. Empty for the unmodified/truncation-only
+    /// forms. Used to decide which disease-variant-colocalized sites apply to this specific proteoform.</summary>
+    public HashSet<string> PtmFamilies { get; set; } = new();
+
+    /// <summary>First surviving residue (1-based, inclusive) for this proteoform. 1 for full-length
+    /// and C-terminal truncations; higher for N-terminal truncations. Used to drop variant sites
+    /// that fall outside a truncated proteoform.</summary>
+    public int StartResidue { get; set; } = 1;
+
+    /// <summary>Last surviving residue (1-based, inclusive) for this proteoform. Equals the sequence
+    /// length for full-length and N-terminal truncations; lower for C-terminal truncations.</summary>
+    public int EndResidue { get; set; }
 }
 
 /// <summary>Isotopic envelope summary from the distribution calculation.</summary>

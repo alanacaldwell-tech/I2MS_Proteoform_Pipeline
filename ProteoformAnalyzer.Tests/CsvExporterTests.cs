@@ -30,8 +30,35 @@ public class CsvExporterTests
             var lines = File.ReadAllLines(path);
 
             Assert.Contains("Protein Disease Involvement", lines[0]);
+            Assert.Contains("Disease-Relevant Proteoform", lines[0]);
             Assert.Contains("PTM Sites at Variants", lines[0]);
             Assert.Contains("Parkinson disease (PARK1)", lines[1]);
+            Assert.Contains("Yes", lines[1]);   // carries a variant-colocalized PTM site
+        }
+        finally { File.Delete(path); }
+    }
+
+    [Fact]
+    public void ExportDatabase_NonRelevantProteoform_HasBlankFlag()
+    {
+        var entries = new List<ProteoformEntry>
+        {
+            new()
+            {
+                ProteinLabel = "P1", ModificationName = "Unmodified (intact)", CentroidMass = 1000,
+                ProteinDiseaseInvolvement = new() { "Parkinson disease (PARK1)" },
+                PtmVariantSites = new()   // no variant-colocalized site on this proteoform
+            }
+        };
+
+        string path = TempCsv();
+        try
+        {
+            CsvExporter.ExportDatabase(entries, path);
+            string row = File.ReadAllLines(path)[1];
+            // Protein-level disease context present, but the per-proteoform flag is blank.
+            Assert.Contains("Parkinson disease (PARK1)", row);
+            Assert.Contains("Parkinson disease (PARK1),,", row);  // empty flag, empty sites
         }
         finally { File.Delete(path); }
     }
@@ -67,6 +94,7 @@ public class CsvExporterTests
             Assert.Contains("# Charge States", header);
             Assert.Contains("Match Rank", header);
             Assert.Contains("Protein Disease Involvement", header);
+            Assert.Contains("Disease-Relevant Proteoform", header);
             Assert.Contains("PTM Sites at Variants", header);
             Assert.Contains("fileA.dmt Ion Count", header);
             Assert.Contains("fileA.dmt Exp Mass (Da)", header);
