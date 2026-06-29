@@ -59,13 +59,6 @@ public class ProteoformEntry
     /// colocalized modification (e.g. the unmodified form, or a form modified only elsewhere).</summary>
     public List<string> PtmVariantSites { get; set; } = new();
 
-    /// <summary>Short qualitative label for how this specific proteoform relates to disease, derived
-    /// from the variant-colocalized PTM sites it carries: "Disease variant PTM" (carries a PTM at a
-    /// site disrupted by a disease-associated variant), "Sequence variant PTM" (carries a PTM at a
-    /// variant of unspecified significance), or "" (no variant-colocalized PTM — consistent with the
-    /// normal/reference form). This is a composition claim, not an abundance claim.</summary>
-    public string DiseaseRelevance { get; set; } = "";
-
     /// <summary>Modification families this proteoform carries (e.g. "phosphorylation"), keyed the
     /// same way as <see cref="ProteoformBuilder.ModFamily"/>. Empty for the unmodified/truncation-only
     /// forms. Used to decide which disease-variant-colocalized sites apply to this specific proteoform.</summary>

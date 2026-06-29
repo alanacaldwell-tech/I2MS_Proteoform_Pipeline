@@ -1,5 +1,3 @@
-using System.Text.RegularExpressions;
-
 namespace ProteoformAnalyzer;
 
 /// <summary>
@@ -18,32 +16,21 @@ public static class DiseaseAnnotator
     private const int MaxSiteNotes = 25;
 
     /// <summary>
-    /// One PTM site whose position colocalizes with an annotated sequence variant. Carries the
-    /// modification <see cref="FamilyKey"/> (so we can tell which proteoforms could host it), the
-    /// original 1-based <see cref="Position"/> (so we can drop it from truncated proteoforms that no
-    /// longer span the site), a human-readable <see cref="Note"/>, and whether the variant is
-    /// disease-associated (<see cref="IsDiseaseAssociated"/>, i.e. linked to one of the protein's
-    /// documented diseases) versus a variant of unspecified significance.
+    /// One PTM site whose position colocalizes with an annotated disease sequence variant. Carries
+    /// the modification <see cref="FamilyKey"/> (so we can tell which proteoforms could host it) and
+    /// the original 1-based <see cref="Position"/> (so we can drop it from truncated proteoforms that
+    /// no longer span the site), plus a human-readable <see cref="Note"/>.
     /// </summary>
-    public record VariantColocalizedSite(string FamilyKey, int Position, string Note, bool IsDiseaseAssociated);
+    public record VariantColocalizedSite(string FamilyKey, int Position, string Note);
 
     /// <summary>
-    /// Finds every PTM whose position colocalizes with a sequence variant, marks the PTM (adding the
-    /// variant description to <see cref="PtmAnnotation.DiseaseAssociations"/>) and returns the
-    /// colocalized sites. Each note links the site to the specific disease where the UniProt variant
-    /// description names one of the protein's documented diseases, and frames it against the normal
-    /// (reference) sequence so the analyst has a healthy-state reference point.
+    /// Finds every PTM whose position colocalizes with a disease sequence variant, marks the PTM
+    /// (adding the variant description to <see cref="PtmAnnotation.DiseaseAssociations"/>) and returns
+    /// the colocalized sites with the metadata needed to attach them to the right proteoforms.
     /// </summary>
     public static List<VariantColocalizedSite> ColocalizedSites(List<PtmAnnotation> ptms, DiseaseInfo disease)
     {
         if (disease.VariantSites.Count == 0) return new();
-
-        // Map each documented disease acronym (e.g. "PARK1") back to its full name so a variant
-        // description like "in PARK1; loss of function" can be linked to "Parkinson disease (PARK1)".
-        var diseasesByAcronym = disease.ProteinDiseases
-            .Select(name => (Name: name, Acronym: ExtractAcronym(name)))
-            .Where(x => x.Acronym.Length > 0)
-            .ToList();
 
         var variantsByPosition = disease.VariantSites
             .Where(v => v.Position > 0)
@@ -58,17 +45,8 @@ public static class DiseaseAnnotator
 
             p.DiseaseAssociations.AddRange(descriptions);
             string residue = p.Residue?.ToString() ?? "";
-            string desc = string.Join(" | ", descriptions);
-
-            bool isDisease = TryLinkDisease(desc, diseasesByAcronym, out string linkedDisease);
-            string note = isDisease
-                ? $"{residue}{p.Position} {p.ModificationName} — modification disrupted by a {linkedDisease}-" +
-                  $"associated variant (\"{desc}\"); the site is intact in the normal/reference sequence"
-                : $"{residue}{p.Position} {p.ModificationName} — at a sequence variant of unspecified " +
-                  $"clinical significance (\"{desc}\")";
-
-            sites.Add(new VariantColocalizedSite(
-                ProteoformBuilder.ModFamily(p.ModificationName), p.Position, note, isDisease));
+            string note = $"{residue}{p.Position} {p.ModificationName} @ variant: {string.Join(" | ", descriptions)}";
+            sites.Add(new VariantColocalizedSite(ProteoformBuilder.ModFamily(p.ModificationName), p.Position, note));
         }
         return sites;
     }
@@ -94,50 +72,13 @@ public static class DiseaseAnnotator
         foreach (var e in entries)
         {
             e.ProteinDiseaseInvolvement = disease.ProteinDiseases;
-
-            var own = sites
+            e.PtmVariantSites = Cap(sites
                 .Where(s => e.PtmFamilies.Contains(s.FamilyKey)
                          && s.Position >= e.StartResidue && s.Position <= e.EndResidue)
-                .ToList();
-
-            e.PtmVariantSites = Cap(own.Select(s => s.Note).Distinct().ToList());
-            e.DiseaseRelevance = own.Count == 0
-                ? ""
-                : own.Any(s => s.IsDiseaseAssociated) ? "Disease variant PTM" : "Sequence variant PTM";
+                .Select(s => s.Note)
+                .Distinct()
+                .ToList());
         }
-    }
-
-    /// <summary>Extracts a trailing parenthesised acronym, e.g. "Parkinson disease (PARK1)" → "PARK1".</summary>
-    private static string ExtractAcronym(string diseaseName)
-    {
-        var m = Regex.Match(diseaseName, @"\(([^)]+)\)\s*$");
-        return m.Success ? m.Groups[1].Value : "";
-    }
-
-    /// <summary>
-    /// True when the variant description names one of the protein's documented diseases (matched on
-    /// the disease acronym as a whole word), or carries explicit pathogenic language. Returns the
-    /// linked disease name (or "disease") so the note can reference the specific condition.
-    /// </summary>
-    private static bool TryLinkDisease(
-        string description, List<(string Name, string Acronym)> diseases, out string linked)
-    {
-        foreach (var (name, acronym) in diseases)
-        {
-            if (Regex.IsMatch(description, $@"\b{Regex.Escape(acronym)}\b", RegexOptions.IgnoreCase))
-            {
-                linked = name;
-                return true;
-            }
-        }
-        if (Regex.IsMatch(description, @"\bpathogenic\b", RegexOptions.IgnoreCase) &&
-            !Regex.IsMatch(description, @"\b(benign|non-pathogenic|likely benign)\b", RegexOptions.IgnoreCase))
-        {
-            linked = "disease";
-            return true;
-        }
-        linked = "";
-        return false;
     }
 
     private static List<string> Cap(List<string> notes)

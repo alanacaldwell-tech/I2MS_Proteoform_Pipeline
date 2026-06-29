@@ -17,9 +17,8 @@ public class CsvExporterTests
         {
             new()
             {
-                ProteinLabel = "P1", ModificationName = "Mono-Phospho", CentroidMass = 1000,
+                ProteinLabel = "P1", ModificationName = "Unmodified (intact)", CentroidMass = 1000,
                 ProteinDiseaseInvolvement = new() { "Parkinson disease (PARK1)" },
-                DiseaseRelevance = "Disease variant PTM",
                 PtmVariantSites = new() { "S5 Phosphoserine @ variant: in PARK1" }
             }
         };
@@ -34,7 +33,7 @@ public class CsvExporterTests
             Assert.Contains("Disease-Relevant Proteoform", lines[0]);
             Assert.Contains("PTM Sites at Variants", lines[0]);
             Assert.Contains("Parkinson disease (PARK1)", lines[1]);
-            Assert.Contains("Disease variant PTM", lines[1]);   // descriptive per-proteoform flag
+            Assert.Contains("Yes", lines[1]);   // carries a variant-colocalized PTM site
         }
         finally { File.Delete(path); }
     }
@@ -71,7 +70,6 @@ public class CsvExporterTests
         {
             ProteinLabel = "P1", ModificationName = "Mono-Phospho", CentroidMass = 1079,
             ProteinDiseaseInvolvement = new() { "Alzheimer disease (AD)" },
-            DiseaseRelevance = "Disease variant PTM",
             PtmVariantSites = new() { "S9 Phosphoserine @ variant: in AD" }
         };
         var ar = new AnalysisResult
@@ -102,13 +100,7 @@ public class CsvExporterTests
             Assert.Contains("fileA.dmt Exp Mass (Da)", header);
 
             Assert.Contains("Alzheimer disease (AD)", row);
-            Assert.Contains("Disease variant PTM", row);
             Assert.Contains("500", row);
-
-            // Disease-context columns are now placed after the per-file columns.
-            Assert.True(header.IndexOf("Protein Disease Involvement", StringComparison.Ordinal)
-                        > header.IndexOf("fileA.dmt Exp Mass (Da)", StringComparison.Ordinal),
-                        "Disease columns should come after the per-file columns.");
         }
         finally { File.Delete(path); }
     }

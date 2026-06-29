@@ -19,7 +19,7 @@ public static class CsvExporter
             w.WriteLine($"{Csv(e.ProteinLabel)},{Csv(e.ModificationName)},{Csv(e.AlternativeName)}," +
                         $"{e.CentroidMass:F4},+/- {e.Tolerance:F1} Da," +
                         $"{(e.Envelope is not null ? e.Envelope.Sigma.ToString("F3") : "")}," +
-                        $"{Csv(string.Join("; ", e.ProteinDiseaseInvolvement))},{Csv(e.DiseaseRelevance)},{Csv(string.Join("; ", e.PtmVariantSites))}");
+                        $"{Csv(string.Join("; ", e.ProteinDiseaseInvolvement))},{DiseaseRelevantFlag(e)},{Csv(string.Join("; ", e.PtmVariantSites))}");
         }
     }
 
@@ -29,14 +29,13 @@ public static class CsvExporter
     /// experimental masses that track to the same proteoform are merged, with the single
     /// "Mean Experimental Mass" column holding the ion-count-weighted representative and the
     /// per-file experimental masses preserved in trailing columns.
-    /// Column order: Protein | Modification Name | Alternative Name | Predicted Mass (Da) |
+    /// Columns: Protein | Modification Name | Alternative Name | Predicted Mass (Da) |
     ///          Mean Experimental Mass (Da) | Mass Error (Da) | Charge States Observed |
-    ///          # Charge States | Match Rank |
-    ///          [file1] Ion Count | … | [file1] Exp Mass (Da) | … |
-    ///          Protein Disease Involvement | Disease-Relevant Proteoform | PTM Sites at Variants
-    /// The per-file columns stay together in the middle (ion counts first, then experimental masses)
-    /// and the disease-context columns are placed last so they are easy to find regardless of how
-    /// many .dmt files were processed. Only proteoforms matched in at least one file are included.
+    ///          # Charge States | Match Rank | Protein Disease Involvement |
+    ///          Disease-Relevant Proteoform | PTM Sites at Variants |
+    ///          [file1] Ion Count | … | [file1] Exp Mass (Da) | …
+    /// The variable per-file columns stay last (ion counts first, then experimental masses)
+    /// so the fixed columns are stable. Only proteoforms matched in at least one file are included.
     /// </summary>
     public static void ExportResults(
         List<AnalysisResult> results,
@@ -45,15 +44,14 @@ public static class CsvExporter
     {
         using var w = new StreamWriter(path);
 
-        // Header — fixed match columns, then per-file ion counts, then per-file experimental masses,
-        // then the disease-context columns last.
+        // Header — fixed columns, then per-file ion counts, then per-file experimental masses.
         var header = "Protein,Modification Name,Alternative Name,Predicted Centroid Mass (Da),Mean Experimental Mass (Da)," +
-                     "Mass Error (Da),Charge States Observed,# Charge States,Match Rank";
+                     "Mass Error (Da),Charge States Observed,# Charge States,Match Rank," +
+                     "Protein Disease Involvement,Disease-Relevant Proteoform,PTM Sites at Variants";
         foreach (var fn in fileNames)
             header += $",{Csv(fn)} Ion Count";
         foreach (var fn in fileNames)
             header += $",{Csv(fn)} Exp Mass (Da)";
-        header += ",Protein Disease Involvement,Disease-Relevant Proteoform,PTM Sites at Variants";
         w.WriteLine(header);
 
         foreach (var r in results)
@@ -67,7 +65,10 @@ public static class CsvExporter
             string charges   = Csv(string.Join(";", r.ChargeStatesObserved));
             string nCharges  = r.ChargeStatesObserved.Count.ToString();
             string rank      = r.RankWithinPeak.ToString();
-            string row       = $"{protein},{name},{altName},{pred},{expt},{massErr},{charges},{nCharges},{rank}";
+            string disease   = Csv(string.Join("; ", r.DatabaseEntry.ProteinDiseaseInvolvement));
+            string relevant  = DiseaseRelevantFlag(r.DatabaseEntry);
+            string variants  = Csv(string.Join("; ", r.DatabaseEntry.PtmVariantSites));
+            string row       = $"{protein},{name},{altName},{pred},{expt},{massErr},{charges},{nCharges},{rank},{disease},{relevant},{variants}";
 
             // Per-file ion counts (0 where undetected)
             foreach (var fn in fileNames)
@@ -84,15 +85,15 @@ public static class CsvExporter
                     : ",";
             }
 
-            // Disease-context columns last.
-            string disease   = Csv(string.Join("; ", r.DatabaseEntry.ProteinDiseaseInvolvement));
-            string relevant  = Csv(r.DatabaseEntry.DiseaseRelevance);
-            string variants  = Csv(string.Join("; ", r.DatabaseEntry.PtmVariantSites));
-            row += $",{disease},{relevant},{variants}";
-
             w.WriteLine(row);
         }
     }
+
+    // "Yes" when this specific proteoform carries a modification at a disease-associated sequence
+    // variant (and still spans that residue); blank otherwise. Lets the analyst filter the CSV to
+    // the disease-relevant proteoforms rather than scanning the protein-level disease column.
+    private static string DiseaseRelevantFlag(ProteoformEntry e) =>
+        e.PtmVariantSites.Count > 0 ? "Yes" : "";
 
     private static string Csv(string v) =>
         v.Contains(',') || v.Contains('"') || v.Contains('\n')

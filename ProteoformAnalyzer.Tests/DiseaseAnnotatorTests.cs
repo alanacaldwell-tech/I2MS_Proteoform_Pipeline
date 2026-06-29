@@ -78,43 +78,8 @@ public class DiseaseAnnotatorTests
         Assert.Empty(acetyl.PtmVariantSites);   // carries a different modification family
         Assert.Empty(intact.PtmVariantSites);   // carries no modification
 
-        // The variant ("in PARK1") is linked to the protein's documented disease, so the phospho
-        // proteoform is flagged as disease-relevant; the others carry no relevance label.
-        Assert.Equal("Disease variant PTM", phospho.DiseaseRelevance);
-        Assert.Equal("", acetyl.DiseaseRelevance);
-        Assert.Equal("", intact.DiseaseRelevance);
-        Assert.Contains("Parkinson disease (PARK1)", phospho.PtmVariantSites[0]);
-
         // Protein-level disease involvement is shared context on every proteoform.
         Assert.All(entries, e => Assert.Equal(disease.ProteinDiseases, e.ProteinDiseaseInvolvement));
-    }
-
-    [Fact]
-    public void ColocalizedSites_VariantOfUnspecifiedSignificance_IsNotDiseaseLabelled()
-    {
-        // A variant whose description names no documented disease and no pathogenic language.
-        var disease = new DiseaseInfo
-        {
-            ProteinDiseases = new() { "Parkinson disease (PARK1)" },
-            VariantSites = new() { (5, "in dbSNP:rs12345") }
-        };
-        var ptms = new List<PtmAnnotation>
-        {
-            new() { ModificationName = "Phosphoserine", Position = 5, Residue = 'S' },
-        };
-
-        var sites = DiseaseAnnotator.ColocalizedSites(ptms, disease);
-
-        var entry = new ProteoformEntry
-        {
-            ModificationName = "Mono-Phospho",
-            PtmFamilies = new() { "phosphorylation" }, StartResidue = 1, EndResidue = 100
-        };
-        DiseaseAnnotator.Apply(new[] { entry }, disease, sites);
-
-        Assert.Single(sites);
-        Assert.False(sites[0].IsDiseaseAssociated);
-        Assert.Equal("Sequence variant PTM", entry.DiseaseRelevance);
     }
 
     [Fact]
@@ -137,7 +102,6 @@ public class DiseaseAnnotatorTests
         DiseaseAnnotator.Apply(new[] { truncated }, disease, sites);
 
         Assert.Empty(truncated.PtmVariantSites);
-        Assert.Equal("", truncated.DiseaseRelevance);   // site removed by truncation → not relevant
     }
 
     [Fact]
