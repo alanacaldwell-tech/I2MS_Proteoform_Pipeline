@@ -28,26 +28,3 @@ CI (`.github/workflows/ci.yml`) builds and runs the test suite on every push and
   `FdrEstimator`) reports the chance-match rate; decoys are excluded from the output CSV.
 - **Input hardening** — `.dmt` files are validated up front (readable SQLite, an `Ion`
   table with `Mz`/`Charge` columns) so malformed inputs fail with a clear message.
-
-## Disease context
-
-When a UniProt accession is used, each proteoform is annotated (free, from the same
-cached UniProt record) with three honestly-scoped columns:
-
-- **Protein Disease Involvement** — diseases the protein is implicated in (UniProt
-  DISEASE annotations). Protein-level context, identical for every proteoform of a protein.
-- **Disease-Relevant Proteoform** — `Yes` when *this specific proteoform* carries a
-  modification at a disease-associated sequence variant (and still spans that residue),
-  blank otherwise. This is proteoform-specific: the unmodified form, or a form modified
-  only at other positions, is not flagged, and a variant site removed by a truncation is
-  dropped. Filter the CSV on this column to isolate the disease-relevant proteoforms.
-- **PTM Sites at Variants** — the specific variant-colocalized PTM site(s) the proteoform
-  carries (candidate "PTM-disrupting variant" sites).
-
-These surface disease *context* for prioritisation; they do not classify a proteoform as
-pathological. The proteoform-level flag is a *composition* claim (this form carries a
-modification family that has a variant-colocalized site), not an *abundance* claim — it
-does not assert the proteoform is upregulated in or unique to disease. Establishing that
-requires case-vs-control quantitation of the per-file ion counts (label your `.dmt`
-samples by condition), and true site-level classification requires curated data
-(e.g. PhosphoSitePlus).

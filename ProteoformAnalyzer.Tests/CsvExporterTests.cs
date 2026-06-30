@@ -11,16 +11,11 @@ public class CsvExporterTests
     private static string TempCsv() => Path.Combine(Path.GetTempPath(), $"paz_csv_{Guid.NewGuid():N}.csv");
 
     [Fact]
-    public void ExportDatabase_HeaderAndRow_IncludeDiseaseColumns()
+    public void ExportDatabase_WritesHeaderAndRow()
     {
         var entries = new List<ProteoformEntry>
         {
-            new()
-            {
-                ProteinLabel = "P1", ModificationName = "Unmodified (intact)", CentroidMass = 1000,
-                ProteinDiseaseInvolvement = new() { "Parkinson disease (PARK1)" },
-                PtmVariantSites = new() { "S5 Phosphoserine @ variant: in PARK1" }
-            }
+            new() { ProteinLabel = "P1", ModificationName = "Unmodified (intact)", CentroidMass = 1000 }
         };
 
         string path = TempCsv();
@@ -29,48 +24,21 @@ public class CsvExporterTests
             CsvExporter.ExportDatabase(entries, path);
             var lines = File.ReadAllLines(path);
 
-            Assert.Contains("Protein Disease Involvement", lines[0]);
-            Assert.Contains("Disease-Relevant Proteoform", lines[0]);
-            Assert.Contains("PTM Sites at Variants", lines[0]);
-            Assert.Contains("Parkinson disease (PARK1)", lines[1]);
-            Assert.Contains("Yes", lines[1]);   // carries a variant-colocalized PTM site
+            Assert.Contains("Protein", lines[0]);
+            Assert.Contains("Modification Name", lines[0]);
+            Assert.Contains("Predicted Centroid Mass (Da)", lines[0]);
+            Assert.Contains("P1", lines[1]);
+            Assert.Contains("Unmodified (intact)", lines[1]);
         }
         finally { File.Delete(path); }
     }
 
     [Fact]
-    public void ExportDatabase_NonRelevantProteoform_HasBlankFlag()
-    {
-        var entries = new List<ProteoformEntry>
-        {
-            new()
-            {
-                ProteinLabel = "P1", ModificationName = "Unmodified (intact)", CentroidMass = 1000,
-                ProteinDiseaseInvolvement = new() { "Parkinson disease (PARK1)" },
-                PtmVariantSites = new()   // no variant-colocalized site on this proteoform
-            }
-        };
-
-        string path = TempCsv();
-        try
-        {
-            CsvExporter.ExportDatabase(entries, path);
-            string row = File.ReadAllLines(path)[1];
-            // Protein-level disease context present, but the per-proteoform flag is blank.
-            Assert.Contains("Parkinson disease (PARK1)", row);
-            Assert.Contains("Parkinson disease (PARK1),,", row);  // empty flag, empty sites
-        }
-        finally { File.Delete(path); }
-    }
-
-    [Fact]
-    public void ExportResults_HeaderAndRow_IncludeAllNewColumns()
+    public void ExportResults_HeaderAndRow_IncludeMatchAndPerFileColumns()
     {
         var entry = new ProteoformEntry
         {
-            ProteinLabel = "P1", ModificationName = "Mono-Phospho", CentroidMass = 1079,
-            ProteinDiseaseInvolvement = new() { "Alzheimer disease (AD)" },
-            PtmVariantSites = new() { "S9 Phosphoserine @ variant: in AD" }
+            ProteinLabel = "P1", ModificationName = "Mono-Phospho", CentroidMass = 1079
         };
         var ar = new AnalysisResult
         {
@@ -93,13 +61,10 @@ public class CsvExporterTests
             Assert.Contains("Charge States Observed", header);
             Assert.Contains("# Charge States", header);
             Assert.Contains("Match Rank", header);
-            Assert.Contains("Protein Disease Involvement", header);
-            Assert.Contains("Disease-Relevant Proteoform", header);
-            Assert.Contains("PTM Sites at Variants", header);
             Assert.Contains("fileA.dmt Ion Count", header);
             Assert.Contains("fileA.dmt Exp Mass (Da)", header);
 
-            Assert.Contains("Alzheimer disease (AD)", row);
+            Assert.Contains("Mono-Phospho", row);
             Assert.Contains("500", row);
         }
         finally { File.Delete(path); }

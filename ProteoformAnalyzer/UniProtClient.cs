@@ -54,46 +54,6 @@ public class UniProtClient(HttpClient http)
         return (seq, ptms);
     }
 
-    /// <summary>
-    /// Fetches disease context for an accession: the diseases the protein is implicated in
-    /// (DISEASE comments) and annotated sequence-variant positions (Natural variant features).
-    /// Reuses the same cached UniProt JSON as <see cref="FetchAsync"/> — no extra network call on
-    /// a cache hit.
-    /// </summary>
-    public async Task<DiseaseInfo> FetchDiseaseAsync(string accession)
-    {
-        var info = new DiseaseInfo();
-
-        string url = $"{Base}/{accession}?format=json";
-        var (entry, outcome) = await ResilientJson.GetAsync<UniProtEntry>(http, url, "UniProt-disease");
-        if (entry is null || outcome is FetchOutcome.Failed or FetchOutcome.NotFound)
-            return info;
-
-        // Protein-level disease involvement
-        foreach (var comment in entry.Comments ?? [])
-        {
-            if (!string.Equals(comment.CommentType, "DISEASE", StringComparison.OrdinalIgnoreCase)) continue;
-            string? name = comment.Disease?.DiseaseId;
-            if (string.IsNullOrWhiteSpace(name)) continue;
-            string acronym = comment.Disease?.Acronym ?? "";
-            info.ProteinDiseases.Add(acronym.Length > 0 ? $"{name} ({acronym})" : name);
-        }
-        info.ProteinDiseases = info.ProteinDiseases.Distinct().ToList();
-
-        // Sequence-variant sites (position + description)
-        foreach (var feature in entry.Features ?? [])
-        {
-            if (!string.Equals(feature.Type, "Natural variant", StringComparison.OrdinalIgnoreCase)) continue;
-            int pos = feature.Location?.Start?.Value ?? 0;
-            if (pos <= 0 || string.IsNullOrWhiteSpace(feature.Description)) continue;
-            info.VariantSites.Add((pos, feature.Description!));
-        }
-
-        RunManifest.Record(
-            $"UniProt disease {accession}: {info.ProteinDiseases.Count} disease(s), {info.VariantSites.Count} variant site(s)");
-        return info;
-    }
-
     // Only genuine chemical PTM feature types from UniProt.
     // Signal/transit/propeptide are excluded: their description fields contain
     // functional notes (e.g. "No nuclear targeting of...") not modification names.
@@ -156,27 +116,6 @@ file class UniProtEntry
 
     [JsonPropertyName("features")]
     public List<UniProtFeature>? Features { get; set; }
-
-    [JsonPropertyName("comments")]
-    public List<UniProtComment>? Comments { get; set; }
-}
-
-file class UniProtComment
-{
-    [JsonPropertyName("commentType")]
-    public string? CommentType { get; set; }
-
-    [JsonPropertyName("disease")]
-    public UniProtDisease? Disease { get; set; }
-}
-
-file class UniProtDisease
-{
-    [JsonPropertyName("diseaseId")]
-    public string? DiseaseId { get; set; }
-
-    [JsonPropertyName("acronym")]
-    public string? Acronym { get; set; }
 }
 
 file class UniProtSequence

@@ -122,8 +122,10 @@ while (true)
 
 // ── 2. Fetch from UniProt / databases if accession was given ──────────────
 var allPtms = new List<PtmAnnotation>();
-DiseaseInfo diseaseInfo = new();
-List<DiseaseAnnotator.VariantColocalizedSite> diseaseSites = new();
+
+// Label used to identify this protein in the output. For an accession it is the accession;
+// for a raw sequence the user must supply a name (collected below).
+string? proteinName = null;
 
 if (uniprotId is not null)
 {
@@ -146,17 +148,19 @@ if (uniprotId is not null)
     var ptmExClient = new PtmExchangeClient(http);
     var ptmExPtms = await ptmExClient.FetchAsync(uniprotId, sequence);
     allPtms.AddRange(ptmExPtms);
-
-    // Disease/variant context (reuses the cached UniProt JSON — no extra network call).
-    diseaseInfo = await uniprotClient.FetchDiseaseAsync(uniprotId);
-    diseaseSites = DiseaseAnnotator.ColocalizedSites(allPtms, diseaseInfo);
-    if (!diseaseInfo.IsEmpty)
-        Console.WriteLine($"  [Disease] {diseaseInfo.ProteinDiseases.Count} protein disease link(s), " +
-                          $"{diseaseSites.Select(s => s.Note).Distinct().Count()} variant-colocalized PTM site(s).");
 }
 else
 {
     Console.WriteLine($"Sequence provided directly ({sequence.Length} aa). Skipping database queries.");
+
+    // A raw sequence carries no accession, so require a name to identify it in the output.
+    while (true)
+    {
+        Console.Write("Enter a name for this protein: ");
+        proteinName = Console.ReadLine()?.Trim();
+        if (!string.IsNullOrWhiteSpace(proteinName)) break;
+        Console.WriteLine("  A name is required when a sequence is provided.");
+    }
 }
 
 // ── 3. Summary ────────────────────────────────────────────────────────────
@@ -229,13 +233,9 @@ if (!string.IsNullOrEmpty(maxOccStr) &&
 Console.WriteLine();
 Console.WriteLine($"Building proteoform database (truncations: {includeTrunc}, max occupancy per PTM type: {maxOccupancy})...");
 var proteoforms = ProteoformBuilder.Build(sequence, allPtms, includeTrunc, tolerance: 5.0,
-                                         proteinLabel: uniprotId ?? "Target",
+                                         proteinLabel: uniprotId ?? proteinName ?? "Target",
                                          maxOccupancyPerFamily: maxOccupancy);
 Console.WriteLine($"Generated {proteoforms.Count} database entries.");
-
-// Attach protein-level disease involvement (shared context) and the variant-colocalized PTM sites
-// that each specific proteoform actually carries.
-DiseaseAnnotator.Apply(proteoforms, diseaseInfo, diseaseSites);
 
 // ── 6b. Contaminant proteins ──────────────────────────────────────────────
 // If the user wants to check for contaminating proteins, fetch their databases
@@ -267,9 +267,6 @@ if (searchContaminants)
         var contEntries = ProteoformBuilder.Build(contSeq, contAllPtms, includeTrunc, tolerance: 5.0,
                                                    proteinLabel: contId,
                                                    maxOccupancyPerFamily: maxOccupancy);
-
-        var contDisease = await contUniProtClient.FetchDiseaseAsync(contId);
-        DiseaseAnnotator.Apply(contEntries, contDisease, DiseaseAnnotator.ColocalizedSites(contAllPtms, contDisease));
 
         proteoforms.AddRange(contEntries);
         Console.WriteLine($"done — {contEntries.Count} entries added ({contAllPtms.Count} PTM annotations).");
@@ -345,7 +342,9 @@ if (!string.IsNullOrEmpty(dmtFolder))
 }
 
 // ── 8. Export CSV ─────────────────────────────────────────────────────────
-string defaultCsv = uniprotId is not null ? $"{uniprotId}_proteoforms.csv" : "proteoforms.csv";
+string outputLabel = uniprotId ?? proteinName ?? "proteoforms";
+string safeLabel = string.Concat(outputLabel.Select(c => Path.GetInvalidFileNameChars().Contains(c) ? '_' : c));
+string defaultCsv = $"{safeLabel}_proteoforms.csv";
 
 string csvPath;
 while (true)
