@@ -46,7 +46,7 @@ public class PtmExchangeClient(HttpClient http)
 
             foreach (var entry in payload)
             {
-                if (entry.PtmType is null) continue;
+                if (string.IsNullOrWhiteSpace(entry.PtmType)) continue;
                 string name = entry.PtmType;
                 int pos = entry.Position;
                 double delta = entry.MassDelta ?? DeltaFromName(name);

@@ -68,6 +68,27 @@ public class ProteoformBuilderTests
     }
 
     [Fact]
+    public void Build_BlankPtmNames_AreIgnoredWithoutThrowing()
+    {
+        // Some source endpoints return PTM entries with an empty modification type. These must not
+        // form an unnamed family (which previously threw IndexOutOfRangeException during name
+        // formatting); they should simply be dropped.
+        var ptms = new List<PtmAnnotation>
+        {
+            new() { ModificationName = "",   Position = 3, MassDelta = 42.0 },
+            new() { ModificationName = "  ", Position = 7, MassDelta = 42.0 },
+            new() { ModificationName = "Phospho", Position = 5, MassDelta = 79.96633 },
+        };
+
+        var entries = ProteoformBuilder.Build("ACDEFGHIKL", ptms,
+            includeTruncations: true, tolerance: 5.0);
+
+        // The valid PTM still produces an entry; the blank ones contribute nothing.
+        Assert.Contains(entries, e => e.ModificationName.ToLower().Contains("phospho"));
+        Assert.DoesNotContain(entries, e => string.IsNullOrWhiteSpace(e.ModificationName));
+    }
+
+    [Fact]
     public void Build_TruncationsRenderedAsResidueRanges()
     {
         var entries = ProteoformBuilder.Build("ACDEFG", new List<PtmAnnotation>(),

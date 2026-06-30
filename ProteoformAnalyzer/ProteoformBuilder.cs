@@ -15,6 +15,10 @@ public static class ProteoformBuilder
         string proteinLabel = "",
         int maxOccupancyPerFamily = 12)
     {
+        // Drop PTM annotations with a blank name: some source endpoints return entries with an empty
+        // modification type, which would otherwise form an unnamed family and break name formatting.
+        allPtms = allPtms.Where(p => !string.IsNullOrWhiteSpace(p.ModificationName)).ToList();
+
         var entries = new List<ProteoformEntry>();
         var intactFormula = AminoAcidData.GetFormula(sequence);
         var intactEnvelope = IsotopeCalculator.Compute(intactFormula);
@@ -368,7 +372,11 @@ public static class ProteoformBuilder
             6 => "Hexa",
             _ => $"{k}×"
         };
-        string display = char.ToUpper(family[0]) + family[1..];
+        // Guard against an empty family key (e.g. a PTM with no name slipping through): fall back to
+        // the base name so multiplicity formatting can never index into an empty string.
+        string display = string.IsNullOrEmpty(family)
+            ? (string.IsNullOrWhiteSpace(baseName) ? "Modification" : baseName)
+            : char.ToUpper(family[0]) + family[1..];
         return $"{prefix}-{display} ({k} of {total} sites)";
     }
 
