@@ -127,6 +127,13 @@ var allPtms = new List<PtmAnnotation>();
 // for a raw sequence the user must supply a name (collected below).
 string? proteinName = null;
 
+// Offset added to the working-sequence positions to recover the original full-length numbering in
+// the output (truncation ranges). It accumulates a recombinant→reference shift (from the alignment)
+// and/or a region→sequence shift (from a region restriction). 0 means the numbers are already
+// full-length. regionSuffix records a chosen region for the label/filename.
+int residueOffset = 0;
+string regionSuffix = "";
+
 if (uniprotId is not null)
 {
     Console.WriteLine();
@@ -204,8 +211,15 @@ else
             if (map.Count == 0)
                 Console.WriteLine($"  Could not align the construct to {refAcc} (no matching region found) — no PTMs imported.");
             else
+            {
+                // Number the output by the reference's original positions: shift construct positions by
+                // (referencePos - constructPos) measured at the start of the aligned native region.
+                var anchor = map.OrderBy(kv => kv.Value).First();   // smallest construct (query) position
+                residueOffset = anchor.Key - anchor.Value;
                 Console.WriteLine($"  Aligned to {refAcc}: {map.Count}/{refSeq.Length} reference residues matched; " +
-                                  $"imported {mapped} of {refPtms.Count} known PTM annotation(s).");
+                                  $"imported {mapped} of {refPtms.Count} known PTM annotation(s). " +
+                                  $"Output numbered by {refAcc} positions.");
+            }
         }
     }
 }
@@ -216,8 +230,6 @@ else
 // kept only if they fall inside it (and remapped to the fragment), and proteoforms —
 // including further truncations — are built from the fragment. Truncation ranges are
 // still displayed in the original UniProt coordinates via the residue offset.
-int residueOffset = 0;
-string regionSuffix = "";
 Console.WriteLine();
 Console.WriteLine("Restrict analysis to a sequence region? Examples: \"1098-1255\", \"1098-\" (to the C-terminus),");
 Console.Write($"\"-500\" (from the N-terminus). Press Enter for the whole sequence (1-{sequence.Length}): ");
@@ -264,7 +276,8 @@ while (!string.IsNullOrEmpty(regionInput))
             Source = p.Source
         })
         .ToList();
-    residueOffset = start - 1;
+    // Accumulate onto any recombinant→reference offset so combined use stays in reference numbering.
+    residueOffset += start - 1;
     regionSuffix = $":{start}-{end}";
     Console.WriteLine($"  Restricted to residues {start}-{end} ({sequence.Length} aa); {allPtms.Count} PTM annotation(s) retained (in-region + whole-protein).");
     break;
