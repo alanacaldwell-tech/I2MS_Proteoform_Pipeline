@@ -13,7 +13,8 @@ public static class ProteoformBuilder
         bool includeTruncations,
         double tolerance,
         string proteinLabel = "",
-        int maxOccupancyPerFamily = 12)
+        int maxOccupancyPerFamily = 12,
+        int residueOffset = 0)
     {
         // Drop PTM annotations with a blank name: some source endpoints return entries with an empty
         // modification type, which would otherwise form an unnamed family and break name formatting.
@@ -120,7 +121,7 @@ public static class ProteoformBuilder
         foreach (var e in entries)
         {
             e.ProteinLabel = proteinLabel;
-            e.AlternativeName = ComputeAlternativeName(e.ModificationName, sequence.Length);
+            e.AlternativeName = ComputeAlternativeName(e.ModificationName, sequence.Length, residueOffset);
         }
         return entries;
     }
@@ -132,24 +133,26 @@ public static class ProteoformBuilder
     ///   • Truncations → residue range, e.g. "6-140" or "1-135"
     ///   • PTMs        → strips redundant "(X of Y sites)" suffix
     ///   • Combinations of the above are handled component-by-component
+    /// When <paramref name="offset"/> is non-zero (the sequence is a region of a larger protein),
+    /// truncation ranges are rendered in the original protein coordinates by adding the offset.
     /// </summary>
-    private static string ComputeAlternativeName(string modName, int seqLen)
+    private static string ComputeAlternativeName(string modName, int seqLen, int offset = 0)
     {
         // Remove "(X of Y sites)" from any PTM component
         string alt = System.Text.RegularExpressions.Regex.Replace(
             modName, @"\s*\(\d+ of \d+ sites?\)", "");
 
-        // N-terminal truncation (-i residues) → "{i+1}-{seqLen}"
+        // N-terminal truncation (-i residues) → "{i+1+offset}-{seqLen+offset}"
         alt = System.Text.RegularExpressions.Regex.Replace(
             alt,
             @"N-terminal truncation \(-(\d+) residues?\)",
-            m => $"{int.Parse(m.Groups[1].Value) + 1}-{seqLen}");
+            m => $"{int.Parse(m.Groups[1].Value) + 1 + offset}-{seqLen + offset}");
 
-        // C-terminal truncation (-i residues) → "1-{seqLen-i}"
+        // C-terminal truncation (-i residues) → "{1+offset}-{seqLen-i+offset}"
         alt = System.Text.RegularExpressions.Regex.Replace(
             alt,
             @"C-terminal truncation \(-(\d+) residues?\)",
-            m => $"1-{seqLen - int.Parse(m.Groups[1].Value)}");
+            m => $"{1 + offset}-{seqLen - int.Parse(m.Groups[1].Value) + offset}");
 
         return alt.Trim();
     }

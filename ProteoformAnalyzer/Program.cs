@@ -151,7 +151,7 @@ if (uniprotId is not null)
 }
 else
 {
-    Console.WriteLine($"Sequence provided directly ({sequence.Length} aa). Skipping database queries.");
+    Console.WriteLine($"Sequence provided directly ({sequence.Length} aa).");
 
     // A raw sequence carries no accession, so require a name to identify it in the output.
     while (true)
@@ -161,6 +161,110 @@ else
         if (!string.IsNullOrWhiteSpace(proteinName)) break;
         Console.WriteLine("  A name is required when a sequence is provided.");
     }
+
+    // Optional: treat this as a recombinant/tagged construct and import known PTMs from a UniProt
+    // reference. The reference sequence is aligned to the construct so PTM positions are remapped
+    // (tags/linkers fall outside the alignment and their PTMs are dropped).
+    Console.Write("Map known PTMs from a UniProt reference (e.g. a tagged construct)? Enter accession or press Enter to skip: ");
+    string? refAcc = Console.ReadLine()?.Trim().ToUpper();
+    if (!string.IsNullOrEmpty(refAcc))
+    {
+        Console.WriteLine();
+        var refClient = new UniProtClient(http);
+        var (refSeq, refUniProtPtms) = await refClient.FetchAsync(refAcc);
+
+        if (string.IsNullOrEmpty(refSeq))
+        {
+            Console.WriteLine($"  Could not retrieve reference {refAcc} — proceeding with no imported PTMs.");
+        }
+        else
+        {
+            var refPtms = new List<PtmAnnotation>(refUniProtPtms);
+            refPtms.AddRange(await new PrideClient(http).FetchAsync(refAcc, refSeq));
+            refPtms.AddRange(await new PtmExchangeClient(http).FetchAsync(refAcc, refSeq));
+
+            var map = SequenceAligner.MapReferenceToQuery(refSeq, sequence);
+            int mapped = 0;
+            foreach (var p in refPtms)
+            {
+                if (p.Position > 0 && map.TryGetValue(p.Position, out int q))
+                {
+                    allPtms.Add(new PtmAnnotation
+                    {
+                        ModificationName = p.ModificationName,
+                        Position = q,
+                        Residue = char.ToUpper(sequence[q - 1]),
+                        MassDelta = p.MassDelta,
+                        Source = p.Source
+                    });
+                    mapped++;
+                }
+            }
+
+            if (map.Count == 0)
+                Console.WriteLine($"  Could not align the construct to {refAcc} (no matching region found) — no PTMs imported.");
+            else
+                Console.WriteLine($"  Aligned to {refAcc}: {map.Count}/{refSeq.Length} reference residues matched; " +
+                                  $"imported {mapped} of {refPtms.Count} known PTM annotation(s).");
+        }
+    }
+}
+
+// ── 2b. Optional region restriction ───────────────────────────────────────
+// Lets the user focus on a known fragment, e.g. a cleavage product (the C-terminus
+// of MUC1 from residue 1098). The sequence is sliced to the chosen region, PTMs are
+// kept only if they fall inside it (and remapped to the fragment), and proteoforms —
+// including further truncations — are built from the fragment. Truncation ranges are
+// still displayed in the original UniProt coordinates via the residue offset.
+int residueOffset = 0;
+string regionSuffix = "";
+Console.WriteLine();
+Console.WriteLine("Restrict analysis to a sequence region? Examples: \"1098-1255\", \"1098-\" (to the C-terminus),");
+Console.Write($"\"-500\" (from the N-terminus). Press Enter for the whole sequence (1-{sequence.Length}): ");
+string? regionInput = Console.ReadLine()?.Trim();
+while (!string.IsNullOrEmpty(regionInput))
+{
+    int fullLen = sequence.Length;
+    int start = 1, end = fullLen;
+    bool ok = true;
+
+    var parts = regionInput.Split('-');
+    if (parts.Length == 1)
+    {
+        ok = int.TryParse(parts[0].Trim(), out start);   // single number → start to C-terminus
+    }
+    else if (parts.Length == 2)
+    {
+        ok = string.IsNullOrWhiteSpace(parts[0]) || int.TryParse(parts[0].Trim(), out start);
+        if (string.IsNullOrWhiteSpace(parts[0])) start = 1;
+        if (ok && !string.IsNullOrWhiteSpace(parts[1])) ok = int.TryParse(parts[1].Trim(), out end);
+    }
+    else ok = false;
+
+    if (!ok || start < 1 || end > fullLen || start > end)
+    {
+        Console.Write($"  Invalid range. Enter start-end within 1-{fullLen} (or press Enter to skip): ");
+        regionInput = Console.ReadLine()?.Trim();
+        continue;
+    }
+
+    sequence = sequence.Substring(start - 1, end - start + 1);
+    int s = start, e = end;
+    allPtms = allPtms
+        .Where(p => p.Position >= s && p.Position <= e)   // drops out-of-region and unknown-position (≤0) PTMs
+        .Select(p => new PtmAnnotation
+        {
+            ModificationName = p.ModificationName,
+            Position = p.Position - (s - 1),              // remap to fragment coordinates
+            Residue = p.Residue,
+            MassDelta = p.MassDelta,
+            Source = p.Source
+        })
+        .ToList();
+    residueOffset = start - 1;
+    regionSuffix = $":{start}-{end}";
+    Console.WriteLine($"  Restricted to residues {start}-{end} ({sequence.Length} aa); {allPtms.Count} PTM annotation(s) fall within the region.");
+    break;
 }
 
 // ── 3. Summary ────────────────────────────────────────────────────────────
@@ -233,8 +337,9 @@ if (!string.IsNullOrEmpty(maxOccStr) &&
 Console.WriteLine();
 Console.WriteLine($"Building proteoform database (truncations: {includeTrunc}, max occupancy per PTM type: {maxOccupancy})...");
 var proteoforms = ProteoformBuilder.Build(sequence, allPtms, includeTrunc, tolerance: 5.0,
-                                         proteinLabel: uniprotId ?? proteinName ?? "Target",
-                                         maxOccupancyPerFamily: maxOccupancy);
+                                         proteinLabel: (uniprotId ?? proteinName ?? "Target") + regionSuffix,
+                                         maxOccupancyPerFamily: maxOccupancy,
+                                         residueOffset: residueOffset);
 Console.WriteLine($"Generated {proteoforms.Count} database entries.");
 
 // ── 6b. Contaminant proteins ──────────────────────────────────────────────
@@ -342,7 +447,7 @@ if (!string.IsNullOrEmpty(dmtFolder))
 }
 
 // ── 8. Export CSV ─────────────────────────────────────────────────────────
-string outputLabel = uniprotId ?? proteinName ?? "proteoforms";
+string outputLabel = (uniprotId ?? proteinName ?? "proteoforms") + regionSuffix;
 string safeLabel = string.Concat(outputLabel.Select(c => Path.GetInvalidFileNameChars().Contains(c) ? '_' : c));
 string defaultCsv = $"{safeLabel}_proteoforms.csv";
 
