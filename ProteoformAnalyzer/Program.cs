@@ -250,20 +250,23 @@ while (!string.IsNullOrEmpty(regionInput))
 
     sequence = sequence.Substring(start - 1, end - start + 1);
     int s = start, e = end;
+    // Keep PTMs that are positioned inside the region (remapped to fragment coordinates) and
+    // whole-protein / unknown-position PTMs (Position ≤ 0, carried over unchanged). PTMs with a
+    // defined position outside the region are dropped.
     allPtms = allPtms
-        .Where(p => p.Position >= s && p.Position <= e)   // drops out-of-region and unknown-position (≤0) PTMs
+        .Where(p => p.Position <= 0 || (p.Position >= s && p.Position <= e))
         .Select(p => new PtmAnnotation
         {
             ModificationName = p.ModificationName,
-            Position = p.Position - (s - 1),              // remap to fragment coordinates
-            Residue = p.Residue,
+            Position = p.Position <= 0 ? 0 : p.Position - (s - 1),
+            Residue = p.Position <= 0 ? null : p.Residue,
             MassDelta = p.MassDelta,
             Source = p.Source
         })
         .ToList();
     residueOffset = start - 1;
     regionSuffix = $":{start}-{end}";
-    Console.WriteLine($"  Restricted to residues {start}-{end} ({sequence.Length} aa); {allPtms.Count} PTM annotation(s) fall within the region.");
+    Console.WriteLine($"  Restricted to residues {start}-{end} ({sequence.Length} aa); {allPtms.Count} PTM annotation(s) retained (in-region + whole-protein).");
     break;
 }
 
