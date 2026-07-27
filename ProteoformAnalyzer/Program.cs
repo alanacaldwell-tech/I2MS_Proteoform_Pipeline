@@ -134,6 +134,9 @@ string? proteinName = null;
 int residueOffset = 0;
 string regionSuffix = "";
 
+// Known single-residue substitutions (point mutations) pulled from UniProt, in reference numbering.
+var knownVariants = new List<PointVariant>();
+
 if (uniprotId is not null)
 {
     Console.WriteLine();
@@ -155,6 +158,9 @@ if (uniprotId is not null)
     var ptmExClient = new PtmExchangeClient(http);
     var ptmExPtms = await ptmExClient.FetchAsync(uniprotId, sequence);
     allPtms.AddRange(ptmExPtms);
+
+    // Known point mutations (offered as an option later); reuses the cached UniProt record.
+    knownVariants = await uniprotClient.FetchVariantsAsync(uniprotId);
 }
 else
 {
@@ -216,6 +222,11 @@ else
                 // (referencePos - constructPos) measured at the start of the aligned native region.
                 var anchor = map.OrderBy(kv => kv.Value).First();   // smallest construct (query) position
                 residueOffset = anchor.Key - anchor.Value;
+
+                // Keep known variants whose reference residue is present in the construct.
+                var refVariants = await refClient.FetchVariantsAsync(refAcc);
+                knownVariants = refVariants.Where(v => map.ContainsKey(v.Position)).ToList();
+
                 Console.WriteLine($"  Aligned to {refAcc}: {map.Count}/{refSeq.Length} reference residues matched; " +
                                   $"imported {mapped} of {refPtms.Count} known PTM annotation(s). " +
                                   $"Output numbered by {refAcc} positions.");
@@ -276,6 +287,9 @@ while (!string.IsNullOrEmpty(regionInput))
             Source = p.Source
         })
         .ToList();
+    // Keep only variants whose (original-numbered) position lies within the region.
+    knownVariants = knownVariants.Where(v => v.Position >= s && v.Position <= e).ToList();
+
     // Accumulate onto any recombinant→reference offset so combined use stays in reference numbering.
     residueOffset += start - 1;
     regionSuffix = $":{start}-{end}";
@@ -342,6 +356,44 @@ Console.WriteLine();
 Console.Write("Include N- and C-terminal truncations? (y/n, default y): ");
 bool includeTrunc = (Console.ReadLine()?.Trim().ToLower() ?? "y") != "n";
 
+// Truncation-depth cap and internal (both-ends) fragments. Both bound processing time on long
+// proteins: internal fragments are O(depth²), so they are opt-in and gated by the cap.
+int maxTerminusDepth = 0;      // 0 = no cap (single-ended truncations span the whole sequence)
+bool includeInternal = false;
+int minFragmentLength = 1;      // no minimum unless internal fragments are enabled
+if (includeTrunc)
+{
+    Console.Write("Max residues to remove from each terminus (Enter = no limit): ");
+    string? depthStr = Console.ReadLine()?.Trim();
+    if (!string.IsNullOrEmpty(depthStr) && int.TryParse(depthStr, out int d) && d >= 1)
+        maxTerminusDepth = d;
+
+    Console.Write("Also include internal fragments (truncated at BOTH termini)? (y/n, default n): ");
+    includeInternal = (Console.ReadLine()?.Trim().ToLower() ?? "n") == "y";
+    if (includeInternal)
+    {
+        if (maxTerminusDepth == 0)
+        {
+            maxTerminusDepth = 50;   // internal fragments are O(depth²) — require a cap
+            Console.WriteLine($"  Internal fragments require a per-terminus cap; using {maxTerminusDepth}.");
+        }
+        minFragmentLength = 20;      // default minimum for internal fragments
+        Console.Write($"Minimum fragment length in residues (default {minFragmentLength}): ");
+        string? minStr = Console.ReadLine()?.Trim();
+        if (!string.IsNullOrEmpty(minStr) && int.TryParse(minStr, out int ml) && ml >= 1)
+            minFragmentLength = ml;
+    }
+}
+
+// Known point mutations (UniProt "Natural variant" substitutions). At most one per proteoform,
+// applied to the intact and single-PTM forms only, so it stays a bounded multiplier.
+bool includeVariants = false;
+if (knownVariants.Count > 0)
+{
+    Console.Write($"Search for known point mutations? {knownVariants.Count} UniProt variant(s) available (y/n, default n): ");
+    includeVariants = (Console.ReadLine()?.Trim().ToLower() ?? "n") == "y";
+}
+
 int maxOccupancy = 12;
 Console.Write("Max simultaneous modifications per type (default 12, e.g. limits hyperphosphorylated proteins): ");
 string? maxOccStr = Console.ReadLine()?.Trim();
@@ -349,13 +401,20 @@ if (!string.IsNullOrEmpty(maxOccStr) &&
     int.TryParse(maxOccStr, out int mo) && mo >= 1)
     maxOccupancy = mo;
 
+var variantsForBuild = includeVariants ? knownVariants : new List<PointVariant>();
+
 // ── 6. Build proteoform database ──────────────────────────────────────────
 Console.WriteLine();
-Console.WriteLine($"Building proteoform database (truncations: {includeTrunc}, max occupancy per PTM type: {maxOccupancy})...");
+Console.WriteLine($"Building proteoform database (truncations: {includeTrunc}, internal fragments: {includeInternal}, " +
+                  $"point mutations: {includeVariants}, max occupancy per PTM type: {maxOccupancy})...");
 var proteoforms = ProteoformBuilder.Build(sequence, allPtms, includeTrunc, tolerance: 5.0,
                                          proteinLabel: (uniprotId ?? proteinName ?? "Target") + regionSuffix,
                                          maxOccupancyPerFamily: maxOccupancy,
-                                         residueOffset: residueOffset);
+                                         residueOffset: residueOffset,
+                                         variants: variantsForBuild,
+                                         maxTerminusDepth: maxTerminusDepth,
+                                         includeInternalFragments: includeInternal,
+                                         minFragmentLength: minFragmentLength);
 Console.WriteLine($"Generated {proteoforms.Count} database entries.");
 
 // ── 6b. Contaminant proteins ──────────────────────────────────────────────

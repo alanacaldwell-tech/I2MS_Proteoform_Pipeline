@@ -30,6 +30,23 @@ public class PtmAnnotation
     public string Source { get; set; } = "";
 }
 
+/// <summary>
+/// A known single-residue substitution (point mutation), e.g. from a UniProt "Natural variant"
+/// feature. The mass effect is position-independent: <see cref="MassDelta"/> is the average-mass
+/// difference of the substituted residue. <see cref="Position"/> is kept only for labelling and is
+/// expressed in the reference protein's original numbering.
+/// </summary>
+public class PointVariant
+{
+    public int Position { get; set; }
+    public char From { get; set; }
+    public char To { get; set; }
+    public double MassDelta { get; set; }
+    public string Description { get; set; } = "";
+    /// <summary>Compact label, e.g. "R1099H".</summary>
+    public string Label => $"{From}{Position}{To}";
+}
+
 /// <summary>One entry in the proteoform database (predicted proteoform).</summary>
 public class ProteoformEntry
 {

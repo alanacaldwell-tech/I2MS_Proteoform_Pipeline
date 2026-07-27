@@ -14,7 +14,11 @@ public static class ProteoformBuilder
         double tolerance,
         string proteinLabel = "",
         int maxOccupancyPerFamily = 12,
-        int residueOffset = 0)
+        int residueOffset = 0,
+        IReadOnlyList<PointVariant>? variants = null,
+        int maxTerminusDepth = 0,
+        bool includeInternalFragments = false,
+        int minFragmentLength = 1)
     {
         // Drop PTM annotations with a blank name: some source endpoints return entries with an empty
         // modification type, which would otherwise form an unnamed family and break name formatting.
@@ -42,6 +46,29 @@ public static class ProteoformBuilder
                                                            maxOccupancy: maxOccupancyPerFamily))
                 entries.Add(entry);
 
+        // ── 3b. Known point-mutation (variant) proteoforms ────────────────
+        // Each proteoform carries at most one substitution, applied to the intact form and to the
+        // single-family PTM forms only (bounded: does not multiply the cross-family/truncation space).
+        // The substitution is a position-independent mass shift; residue-level PTM/variant interplay
+        // (e.g. a variant that removes a phosphosite) is intentionally not modelled.
+        if (variants is { Count: > 0 })
+        {
+            var variantBases = entries.ToList();   // snapshot: intact + single-family entries
+            foreach (var v in variants)
+            {
+                foreach (var b in variantBases)
+                {
+                    entries.Add(new ProteoformEntry
+                    {
+                        ModificationName = $"{b.ModificationName} + Variant {v.Label}",
+                        CentroidMass = b.CentroidMass + v.MassDelta,
+                        Tolerance = tolerance,
+                        Envelope = ShiftEnvelope(b.Envelope, v.MassDelta)
+                    });
+                }
+            }
+        }
+
         // ── 4. Cross-family PTM combinations ─────────────────────────────
         // Generate all subsets of 2..MaxCombinationDepth different families,
         // each at every valid occupancy level (1..min(SiteCount, maxOccupancyPerFamily)).
@@ -63,7 +90,8 @@ public static class ProteoformBuilder
         // ── 5. Truncations, truncation+single-PTM combinations ────────────
         if (includeTruncations && sequence.Length > 1)
         {
-            var truncations = TruncationGenerator.Generate(sequence);
+            var truncations = TruncationGenerator.Generate(
+                sequence, maxTerminusDepth, includeInternalFragments, minFragmentLength);
 
             int truncPtmCount = truncations.Count * (1 + ptmFamilies.Sum(f => f.SiteCount));
             if (truncPtmCount > 50_000)
@@ -82,12 +110,12 @@ public static class ProteoformBuilder
                     Envelope = truncEnvelope
                 });
 
-                // Only PTMs annotated at positions that still exist in the truncated
-                // sequence can occur. N-terminal truncations remove positions 1..i;
-                // C-terminal truncations remove the last i positions.
-                var survivingPtms = trunc.IsNTerminal
-                    ? allPtms.Where(p => p.Position > trunc.ResiduesToRemove).ToList()
-                    : allPtms.Where(p => p.Position <= sequence.Length - trunc.ResiduesToRemove).ToList();
+                // Only PTMs at positions that still exist in the fragment can occur: the surviving
+                // original positions are (NTermRemoved+1) .. (length − CTermRemoved).
+                var survivingPtms = allPtms
+                    .Where(p => p.Position > trunc.NTermRemoved
+                             && p.Position <= sequence.Length - trunc.CTermRemoved)
+                    .ToList();
 
                 if (survivingPtms.Count == 0)
                     continue;
@@ -142,6 +170,13 @@ public static class ProteoformBuilder
         string alt = System.Text.RegularExpressions.Regex.Replace(
             modName, @"\s*\(\d+ of \d+ sites?\)", "");
 
+        // Internal fragment (both ends): "...N-terminal truncation (-i...) + C-terminal truncation (-j...)"
+        // → "{i+1+offset}-{seqLen-j+offset}". Handled first so the single-ended patterns below don't fire.
+        alt = System.Text.RegularExpressions.Regex.Replace(
+            alt,
+            @"N-terminal truncation \(-(\d+) residues?\) \+ C-terminal truncation \(-(\d+) residues?\)",
+            m => $"{int.Parse(m.Groups[1].Value) + 1 + offset}-{seqLen - int.Parse(m.Groups[2].Value) + offset}");
+
         // N-terminal truncation (-i residues) → "{i+1+offset}-{seqLen+offset}"
         alt = System.Text.RegularExpressions.Regex.Replace(
             alt,
@@ -156,6 +191,15 @@ public static class ProteoformBuilder
 
         return alt.Trim();
     }
+
+    /// <summary>Copies an isotope envelope shifted by a mass delta (for a point-mutation proteoform).</summary>
+    private static IsotopeEnvelope? ShiftEnvelope(IsotopeEnvelope? env, double delta) =>
+        env is null ? null : new IsotopeEnvelope
+        {
+            Centroid = env.Centroid + delta,
+            Sigma = env.Sigma,
+            Points = env.Points.Select(p => (p.Mass + delta, p.Intensity)).ToList()
+        };
 
     // ── Cross-family combination generator ───────────────────────────────
 

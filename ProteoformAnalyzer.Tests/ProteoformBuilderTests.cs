@@ -99,4 +99,46 @@ public class ProteoformBuilderTests
         // C-terminal -1 residue → protein ends at residue 5
         Assert.Contains(entries, e => e.AlternativeName == "1-5");
     }
+
+    [Fact]
+    public void Build_InternalFragments_RenderedAsBothEndedRanges()
+    {
+        // 10-mer; internal fragment removing 2 from each terminus → residues 3-8.
+        var entries = ProteoformBuilder.Build("ACDEFGHIKL", new List<PtmAnnotation>(),
+            includeTruncations: true, tolerance: 5.0,
+            maxTerminusDepth: 4, includeInternalFragments: true, minFragmentLength: 2);
+
+        Assert.Contains(entries, e => e.AlternativeName == "3-8");
+    }
+
+    [Fact]
+    public void Build_InternalFragments_DisabledByDefault()
+    {
+        var entries = ProteoformBuilder.Build("ACDEFGHIKL", new List<PtmAnnotation>(),
+            includeTruncations: true, tolerance: 5.0);
+
+        // No both-ended fragment names when internal fragments are not requested.
+        Assert.DoesNotContain(entries, e =>
+            e.ModificationName.Contains("N-terminal truncation") &&
+            e.ModificationName.Contains("C-terminal truncation"));
+    }
+
+    [Fact]
+    public void Build_PointVariant_AddsMassShiftedProteoform()
+    {
+        var variants = new List<PointVariant>
+        {
+            new() { Position = 3, From = 'D', To = 'E', MassDelta = 14.01565 }
+        };
+
+        var entries = ProteoformBuilder.Build("ACDEFGHIKL", new List<PtmAnnotation>(),
+            includeTruncations: false, tolerance: 5.0, variants: variants);
+
+        var intact = entries.Find(e => e.ModificationName == "Unmodified (intact)");
+        var variant = entries.Find(e => e.ModificationName.Contains("Variant D3E"));
+
+        Assert.NotNull(intact);
+        Assert.NotNull(variant);
+        Assert.Equal(intact!.CentroidMass + 14.01565, variant!.CentroidMass, 3);
+    }
 }

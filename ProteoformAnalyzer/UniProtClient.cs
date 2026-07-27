@@ -54,6 +54,57 @@ public class UniProtClient(HttpClient http)
         return (seq, ptms);
     }
 
+    /// <summary>
+    /// Fetches annotated single-residue substitutions ("Natural variant" features) for an accession,
+    /// with the average-mass delta of each substitution computed from the residue formulas. Only
+    /// single standard-residue → single standard-residue changes are returned (insertions, deletions,
+    /// multi-residue and non-standard variants are skipped). Reuses the same cached UniProt JSON.
+    /// </summary>
+    public async Task<List<PointVariant>> FetchVariantsAsync(string accession)
+    {
+        var result = new List<PointVariant>();
+
+        string url = $"{Base}/{accession}?format=json";
+        var (entry, outcome) = await ResilientJson.GetAsync<UniProtEntry>(http, url, "UniProt-variants");
+        if (entry is null || outcome is FetchOutcome.Failed or FetchOutcome.NotFound) return result;
+
+        foreach (var f in entry.Features ?? [])
+        {
+            if (!string.Equals(f.Type, "Natural variant", StringComparison.OrdinalIgnoreCase)) continue;
+
+            int start = f.Location?.Start?.Value ?? 0;
+            int end = f.Location?.End?.Value ?? start;
+            if (start <= 0 || end != start) continue;   // single-residue positions only
+
+            string orig = f.AlternativeSequence?.OriginalSequence ?? "";
+            var alts = f.AlternativeSequence?.AlternativeSequences;
+            if (orig.Length != 1 || alts is null) continue;
+
+            char from = char.ToUpper(orig[0]);
+            if (!AminoAcidData.ResidueFormulas.TryGetValue(from, out var fromFormula)) continue;
+
+            foreach (var altSeq in alts)
+            {
+                if (string.IsNullOrEmpty(altSeq) || altSeq.Length != 1) continue;
+                char to = char.ToUpper(altSeq[0]);
+                if (to == from) continue;
+                if (!AminoAcidData.ResidueFormulas.TryGetValue(to, out var toFormula)) continue;
+
+                result.Add(new PointVariant
+                {
+                    Position = start,
+                    From = from,
+                    To = to,
+                    MassDelta = AminoAcidData.AverageMass(toFormula) - AminoAcidData.AverageMass(fromFormula),
+                    Description = f.Description ?? ""
+                });
+            }
+        }
+
+        RunManifest.Record($"UniProt variants {accession}: {result.Count} single-residue substitution(s) ({outcome})");
+        return result;
+    }
+
     // Only genuine chemical PTM feature types from UniProt.
     // Signal/transit/propeptide are excluded: their description fields contain
     // functional notes (e.g. "No nuclear targeting of...") not modification names.
@@ -134,12 +185,27 @@ file class UniProtFeature
 
     [JsonPropertyName("location")]
     public UniProtLocation? Location { get; set; }
+
+    [JsonPropertyName("alternativeSequence")]
+    public UniProtAltSeq? AlternativeSequence { get; set; }
+}
+
+file class UniProtAltSeq
+{
+    [JsonPropertyName("originalSequence")]
+    public string? OriginalSequence { get; set; }
+
+    [JsonPropertyName("alternativeSequences")]
+    public List<string>? AlternativeSequences { get; set; }
 }
 
 file class UniProtLocation
 {
     [JsonPropertyName("start")]
     public UniProtPosition? Start { get; set; }
+
+    [JsonPropertyName("end")]
+    public UniProtPosition? End { get; set; }
 }
 
 file class UniProtPosition

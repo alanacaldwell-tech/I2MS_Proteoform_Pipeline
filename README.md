@@ -43,6 +43,34 @@ clean terminal tags, otherwise a local Smith–Waterman alignment). Known PTMs a
 reference are remapped onto the construct's coordinates; residues that fall in tags, linkers, or
 substituted positions are not mapped, so their PTMs are dropped.
 
+## Point mutations (known variants)
+
+When a UniProt reference is available, you can include known single-residue substitutions
+("Natural variant" features). Each is turned into a position-independent mass shift (the
+average-mass difference of the substituted residue) and used to generate variant proteoforms.
+
+Bounds (to keep the database tractable):
+
+- **At most one substitution per proteoform** — proteoforms are reference *or* single-variant.
+- Variants are applied to the **intact form and the single-PTM forms only**, not to the
+  cross-family combinations or truncations, so they add a bounded multiplier rather than
+  multiplying the whole space.
+- Residue-level interplay (e.g. a variant that removes a phosphosite) is **not** modelled — the
+  shift is treated as independent of any co-occurring PTM.
+
+## Truncations and internal fragments
+
+N- and C-terminal truncations are generated as before. Two options bound the cost and add
+internal fragments:
+
+- **Max residues per terminus** — caps how deep single-ended truncations go (default: no limit).
+- **Internal fragments** (opt-in) — fragments truncated at *both* termini, for proteins with
+  internal cleavage. This is O(depth²), so it requires the per-terminus cap (defaulted to 50 when
+  enabled) and a **minimum fragment length** (default 20 aa) to stay bounded.
+
+Truncation/fragment ranges are reported in the original full-length coordinates (respecting any
+region restriction or recombinant alignment offset).
+
 ## Robustness features
 
 - **Tests + CI** — unit/integration tests in `ProteoformAnalyzer.Tests` cover the mass
